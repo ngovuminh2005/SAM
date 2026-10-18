@@ -79,7 +79,7 @@ one repeat and six radii.
 Training output is written under `logs/<run_name>/`: `params.json`, `data.hdf5`,
 `terminal.log`, and `training_time.txt`. A final model checkpoint is saved as
 `final.model`; W&B run data is stored inside the run directory when offline.
-The script uses `env/bin/python` by default; edit `PYTHON` if your environment
+The script uses `.venv/bin/python` by default; edit `PYTHON` if your environment
 uses a different location.
 
 ### CondSAM parameters
@@ -309,11 +309,11 @@ on rank 0. Config, actual random seed, loss/accuracy or GLUE metrics, LR/rho,
 epoch timing and Hessian eigenvalues are recorded as applicable. Log in once:
 
 ```bash
-env/bin/wandb login
+wandb login
 ```
 
 Without credentials the tracker saves offline runs under each run directory;
-`env/bin/wandb sync /path/to/offline-run-*` can upload them later.
+`wandb sync /path/to/offline-run-*` can upload them later.
 `WANDB_MODE=disabled` disables tracking for direct Python entrypoints.
 See [W&B offline documentation](https://docs.wandb.ai/support/models/articles/how-do-i-deal-with-network-issues).
 

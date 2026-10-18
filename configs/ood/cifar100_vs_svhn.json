@@ -1,0 +1,14 @@
+{
+  "name": "cifar100_vs_svhn",
+  "kind": "detection",
+  "id_dataset": "CIFAR100",
+  "ood_dataset": "SVHN",
+  "data_root": "datasets",
+  "batch_size": 256,
+  "num_workers": 4,
+  "score_methods": [
+    "msp",
+    "energy"
+  ],
+  "temperature": 1.0
+}

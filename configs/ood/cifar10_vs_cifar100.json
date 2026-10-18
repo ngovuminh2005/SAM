@@ -1,0 +1,14 @@
+{
+  "name": "cifar10_vs_cifar100",
+  "kind": "detection",
+  "id_dataset": "CIFAR10",
+  "ood_dataset": "CIFAR100",
+  "data_root": "datasets",
+  "batch_size": 256,
+  "num_workers": 4,
+  "score_methods": [
+    "msp",
+    "energy"
+  ],
+  "temperature": 1.0
+}
