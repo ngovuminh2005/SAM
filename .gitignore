@@ -1,0 +1,32 @@
+# Python environments and generated files
+env/
+.venv/
+venv/
+conda_env/
+__pycache__/
+*.py[cod]
+
+# Local data, logs, and experiment outputs
+/datasets/
+/logs/
+wandb/
+**/wandb/
+*.h5
+*.hdf5
+*.log
+
+# Model checkpoints and weights
+*.model
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+**/ckpt/
+**/ckpts/
+**/checkpoint/
+**/checkpoints/
+
+# Local secrets and generated source bundles
+.env
+.env.*
+*.zip

@@ -1,0 +1,32 @@
+{
+  "name": "cifar100_c",
+  "kind": "corruption",
+  "id_dataset": "CIFAR100",
+  "data_root": "datasets",
+  "batch_size": 256,
+  "num_workers": 4,
+  "corruptions": [
+    "gaussian_noise",
+    "shot_noise",
+    "impulse_noise",
+    "defocus_blur",
+    "glass_blur",
+    "motion_blur",
+    "zoom_blur",
+    "snow",
+    "frost",
+    "fog",
+    "brightness",
+    "contrast",
+    "elastic_transform",
+    "pixelate",
+    "jpeg_compression"
+  ],
+  "severities": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
