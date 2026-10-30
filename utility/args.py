@@ -68,7 +68,8 @@ class Args(metaclass=MetaClass):
                     action.type = make_bool
                 # split lists seperated by whitespace in defaults file
                 if action.nargs == "*":
-                    defaults[action.dest] = defaults[action.dest].split(" ") if defaults[action.dest] else []
+                    values = defaults[action.dest].split()
+                    defaults[action.dest] = [action.type(value) if action.type else value for value in values]
 
                 default_keys.remove(action.dest)
 
@@ -122,7 +123,7 @@ class Args(metaclass=MetaClass):
     @classmethod
     def parse_args_contin(cls, defaults: dict) -> None:
         defaults = dict(defaults)
-        for key, value in {"condsamRho": -1.0, "condsamBeta": 0.95, "condsamEps": 1e-8, "condsamPowerIters": 1, "evalEvery": 20}.items():
+        for key, value in {"condsamRho": -1.0, "condsamBeta": 0.95, "condsamEps": 1e-8, "condsamPowerIters": 1, "evalEvery": 20, "topK": []}.items():
             defaults.setdefault(key, value)
         defaults["contin"] = True #make sure contin argument is not overwritten by defaults from param.json file
         cls.parser.set_defaults(**defaults) #read defaults from param.json file

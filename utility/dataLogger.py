@@ -6,12 +6,14 @@ import numpy as np
 from utility import tracking
 
 from utility.args import Args
-from utility.metrics import BaseMetric, available_metrics
+from utility.metrics import BaseMetric, MetricTopKAccuracy, available_metrics
 
 Args.add_argument("--truncate", type=bool, help="truncate log file")
 Args.add_argument("--verbose", type=bool, help="print to terminal")
 Args.add_argument("--metrics", type=str, nargs = "*", help="list of metrics")
 Args.add_argument("--logEach", type=int, help="Iterations to log during training.")
+
+Args.add_argument("--topK", type=int, nargs="*", help="Additional accuracy metrics, e.g. --topK 1 5 10. Empty disables them.")
 
 class DataLogger:
     available_metrics = {}
@@ -41,6 +43,12 @@ class DataLogger:
             else:
                 raise RuntimeError(f"Metric {metricName} not found. Available metrics: {', '.join(available_metrics.keys())}")
 
+        for k in dict.fromkeys(Args.topK):
+            metric = MetricTopKAccuracy(k)
+            self.metrics.append(metric)
+            self.printTrainMetrics.append(metric)
+            self.printTestMetrics.append(metric)
+
         self.loading_bar = LoadingBar(length=(self.columnLen+1)*len(self.printTestMetrics)-3)
 
         self.filePath = os.path.join(Args.logDir, Args.logSubDir, "data.hdf5")
@@ -63,6 +71,16 @@ class DataLogger:
             else:
                 if not os.path.isfile(self.filePath):
                     raise RuntimeError(f"Running in continue mode but log file not found. Path: {self.filePath}")
+                # Allow new top-k metrics when resuming an older run.
+                with h5py.File(self.filePath, "r+") as file:
+                    for metric in self.metrics:
+                        if not isinstance(metric, MetricTopKAccuracy):
+                            continue
+                        for mode in ("train", "test"):
+                            group = file[mode]
+                            if metric.name not in group:
+                                count = len(group["epoch"]) if "epoch" in group else len(group.get("accuracy", []))
+                                group.create_dataset(metric.name, data=np.full(count, np.nan), maxshape=(None,), chunks=True)
                 with open(self.terminalLogPath, "a", encoding="utf-8") as _:
                     pass
 

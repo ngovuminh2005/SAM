@@ -128,3 +128,25 @@ class MetricAccuracy(BaseMetric):
     consolePrintFormat = ".2%"
     def calcMetric(self, state: dict):
         return (torch.argmax(state["predictions"].data, 1) == state["targets"]).to(float).cpu().numpy()
+
+
+class MetricTopKAccuracy(BaseMetric):
+    consolePrintFormat = ".2%"
+
+    def __init__(self, k):
+        super().__init__()
+        self.k = int(k)
+        if self.k < 1:
+            raise ValueError("topK values must be positive integers")
+        self.name = f"accuracy_top{self.k}"
+
+    def calcMetric(self, state: dict):
+        predictions = state["predictions"].detach()
+        if self.k > predictions.shape[1]:
+            raise ValueError(
+                f"topK={self.k} exceeds the number of classes ({predictions.shape[1]})"
+            )
+        if self.k == 1:
+            return (predictions.argmax(dim=1) == state["targets"]).to(float).cpu().numpy()
+        indices = predictions.topk(self.k, dim=1).indices
+        return indices.eq(state["targets"].unsqueeze(1)).any(dim=1).to(float).cpu().numpy()

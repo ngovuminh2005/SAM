@@ -1,8 +1,8 @@
-# SAM Variants: Training and CIFAR-C Evaluation
+# ImageNet Training with SAM Optimizers
+
+Train ImageNet with configurable optimizers, GPU selection, hyperparameters, and multiple top-k accuracy metrics logged to W&B.
 
 ## Environment
-
-Training requires CUDA-compatible NVIDIA GPUs. Create and activate the Conda environment:
 
 ```bash
 conda create -n condsam python=3.12 -y
@@ -13,77 +13,114 @@ pip install --index-url https://download.pytorch.org/whl/cu124 \
 pip install -r requirements.txt
 ```
 
-The launcher uses the active Conda environment's Python interpreter.
+Training requires NVIDIA GPUs. The launcher uses the active Conda environment, otherwise `env/bin/python`. Set `PYTHON` to override the interpreter.
 
-## Datasets
+## ImageNet data
 
-Download clean CIFAR datasets and the corresponding corruption benchmarks:
+Prepare the full ImageNet-1K dataset in ImageFolder layout, with validation images sorted into class folders:
 
-```bash
-python scripts/prepare_datasets.py --dataset cifar10
-python scripts/prepare_datasets.py --dataset cifar100
-python scripts/prepare_ood_datasets.py \
-  --datasets cifar10_c cifar100_c --data-root datasets
+```text
+datasets/ImageNet/
+├── train/<class_id>/*.JPEG
+└── val/<class_id>/*.JPEG
 ```
 
-Data is stored under `datasets/{cifar10,cifar100,CIFAR-10-C,CIFAR-100-C}/`.
+The loader expects 1,281,167 training images and 50,000 validation images. Set `DATASET_ROOT` in the launcher to the directory containing `ImageNet/`, or to a directory containing `train/` and `val/` directly.
 
-## Configuration and Execution
+## Configure and run
 
-Edit `GPU_ID` (GPU indices), `NPROC_PER_NODE` (training GPU count), and W&B credentials directly at the top of
-[scripts/run_sam_variants_cifar_c.sh](scripts/run_sam_variants_cifar_c.sh):
+Edit [scripts/run_imagenet.sh](scripts/run_imagenet.sh). GPU and W&B settings are at the top:
 
 ```bash
-GPU_ID="0"
-NPROC_PER_NODE=1
-export WANDB_API_KEY="your_wandb_api_key"
+GPU_ID="0,1"
+NPROC_PER_NODE=2
+export WANDB_API_KEY="${WANDB_API_KEY:-}"
+export WANDB_PROJECT="ImageNet"
+export WANDB_RUN_GROUP="imagenet"
+export WANDB_MODE="online"
 ```
 
-For two-GPU DDP training, set `GPU_ID="0,1"` and `NPROC_PER_NODE=2`.
-Save the `.sh` file, then execute the launcher command below.
-`NPROC_PER_NODE` must match the number of listed GPUs. The configured batch size
-is global and is divided across training workers. OOD evaluation uses the first
-listed GPU.
+Provide your key through `WANDB_API_KEY` in the environment, or use an existing `wandb login`. Do not commit your actual key. `NPROC_PER_NODE` must equal the number of GPU indices. Batch size is global and divided across workers. The launcher rejects busy GPUs unless `ALLOW_SHARED_GPU=1`.
 
-Training hyperparameters, including epochs, batch size, learning rate and
-optimizer-specific perturbation radii, are defined in the corresponding
-`configs/CIFAR{10,100}_<backbone>.ini` files. The default `CONFIGS` list in the
-launcher includes all five backbones for each dataset:
+Choose the model, optimizer, evaluation interval, and top-k metrics in the same file:
 
-| Backbone | Config suffix |
+```bash
+CONFIG_PATH="configs/ImageNet_ResNet50.ini"
+OPTIMIZER="CondSAM"
+EPOCHS=100
+EVAL_EVERY=20
+TOP_K=(1 5 10)
+
+BATCH_SIZE=256
+LEARNING_RATE=0.1
+WEIGHT_DECAY=0.0001
+MOMENTUM=0.9
+RHO=0.05
+CONDSAM_BETA=0.99
+CONDSAM_EPS=1e-8
+CONDSAM_POWER_ITERS=5
+```
+
+These are editable settings, not tuned results. Empty `BATCH_SIZE`, `LEARNING_RATE`, `WEIGHT_DECAY`, `MOMENTUM`, `RHO`, and CondSAM settings use the selected `.ini` values. `RHO` overrides the selected optimizer's method-specific radius; SGD, Adam, and AdamW ignore it. CondSAM settings apply to `CondSAM`, `CondSam1`, `CondSam2`, and `CondSAM_adam`.
+
+Available ImageNet configurations:
+
+| Model | Config |
 | --- | --- |
-| ResNet-50 | `ResNet50.ini` |
-| WRN-16-4 | `WRN16_4.ini` |
-| PyramidNet-110 | `PyramidNet110.ini` |
-| WRN-28-10 | `WRN28_10.ini` |
-| DenseNet-121 | `DenseNet121.ini` |
+| ResNet-50 | `configs/ImageNet_ResNet50.ini` |
+| WRN-16-4 | `configs/ImageNet_WRN16_4.ini` |
+| WRN-28-10 | `configs/ImageNet_WRN28_10.ini` |
+| PyramidNet-50 | `configs/ImageNet_PyramidNet50.ini` |
+| VGG-16 | `configs/ImageNet_VGG16.ini` |
+| ViT | `configs/ImageNet_ViT.ini` |
+
+`OPTIMIZER` accepts `SGD`, `Adam`, `AdamW`, `SAM`, `ASAM`, `MSAM`, `ESAM`, `lookSAM`, `FriendlySAM`, `FisherSAM`, `MongeSAM`, `GSAM`, `BayesianSAM`, `CondSAM`, `CondSam1`, `CondSam2`, `CondSAM_adam`, `AdamW_SAM`, `Adam_SAM`, `AdamW_MSAM`, `AdamW_FriendlySAM`, and `Adam_FriendlySAM`. Names are case-sensitive. Configure other optimizer-specific options in the `.ini` file or `EXTRA_ARGS` in the launcher.
+
+Preview the command, then start training:
 
 ```bash
-conda activate condsam
-bash scripts/run_sam_variants_cifar_c.sh
+DRY_RUN=1 bash scripts/run_imagenet.sh
+bash scripts/run_imagenet.sh
 ```
 
-The launcher processes CIFAR-10 followed by CIFAR-100, with backbones in the
-table order. Each backbone trains SGD, SAM, ASAM, MSAM, ESAM, FriendlySAM,
-FisherSAM, MongeSAM and GSAM sequentially, once per optimizer.
-Hyperparameters are fixed by each configuration; the training seed is `42 + rank`.
-After each training run, `final.model` is evaluated on the corresponding CIFAR-C
-benchmark in five separate severity runs (1–5), each covering 15 corruption types.
-The default execution produces 90 training runs and 450 evaluation runs.
-Pass config paths as positional arguments to run a subset instead of the full list.
+Additional `main.py` arguments can be passed directly:
 
-## Tracking and Outputs
+```bash
+bash scripts/run_imagenet.sh --learningRate 0.05 --batchSize 128 --topK 1 5 20
+```
 
-Training and evaluation log to W&B project **`variants-cifar-c`**. Training groups
-are `train_cifar10` and `train_cifar100`; evaluation groups follow
-`ood_<dataset>_c_sev<N>`. Evaluation logs per-corruption accuracy and
-`ood/avg_accuracy`. Missing W&B credentials trigger offline storage.
+Settings resolve in this order: `.ini` configuration, launcher options, launcher `EXTRA_ARGS`, then command-line arguments. The launcher always selects `OPTIMIZER`, `EPOCHS`, `EVAL_EVERY`, and `TOP_K`; edit those in the `.sh` file to change the defaults. Evaluation runs every `EVAL_EVERY` epochs and at the final epoch.
 
-Local artifacts are written to `logs/variants_cifar_c_<timestamp>_<pid>/`:
+## Top-k metrics and outputs
 
-| Path | Artifacts |
-| --- | --- |
-| `train/<case>/<run>/` | `params.json`, `data.hdf5`, `terminal.log`, `training_time.txt`, `final.model`; intermediate checkpoints when enabled |
-| `cifar_c_results/<case>__<setting>__sev<N>/` | `partial_results.json`, `results.json`, `results.csv` |
-| Batch root | `cifar_c_summary.md`, `cifar_c_summary.csv` |
-| Each run's `wandb/` directory | Local W&B tracking files when enabled |
+Each k must be a positive integer no larger than the number of classes (1,000 for ImageNet). Duplicate k values are logged once. `TOP_K=()` disables additional top-k metrics; the original `accuracy` metric remains top-1. You can also set `topK = 1 5 10` in `.ini` files when invoking `main.py` directly.
+
+For `TOP_K=(1 5 10)`, W&B receives:
+
+- `train/accuracy_top1`, `train/accuracy_top5`, `train/accuracy_top10` each training epoch.
+- `test/accuracy_top1`, `test/accuracy_top5`, `test/accuracy_top10` each evaluation epoch, using the validation set.
+
+Accuracy values on W&B and in HDF5 are fractions from 0 to 1; terminal output uses percentages. The original `train/accuracy`, `test/accuracy`, and `best_test_accuracy` remain available. Missing W&B login triggers offline logging.
+
+Artifacts are saved under `logs/<dataset>_<optimizer>_<model>_rho<rho>_lr<lr>/`, with a numbered suffix for repeated runs. The exact directory is printed as `[RUN_DIR]`. Each run includes `params.json`, `data.hdf5`, `terminal.log`, `training_time.txt`, `final.model`, and local W&B files. `--logDir` changes the parent output directory.
+
+## CondSAM parameter sweeps
+
+For multiple radii, beta values, power iterations, or repeats, edit [scripts/run_condsam_rho.sh](scripts/run_condsam_rho.sh):
+
+```bash
+CONFIG_PATH="configs/ImageNet_ResNet50.ini"
+RHO_LIST=(0.05 0.1)
+CONDSAM_BETA_LIST=(0.95 0.99)
+CONDSAM_POWER_ITERS_LIST=(1 5)
+TOP_K=(1 5)
+REPEATS=1
+```
+
+Run the sweep with:
+
+```bash
+bash scripts/run_condsam_rho.sh configs/ImageNet_ResNet50.ini imagenet_condsam
+```
+
+This sweep always uses CondSAM. Use `run_imagenet.sh` to select another optimizer. Both launchers expose GPU and W&B settings at the top.
