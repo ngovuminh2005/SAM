@@ -1,6 +1,6 @@
 # ImageNet
 
-## Cài môi trường
+## Environment
 
 ```bash
 conda create -n condsam python=3.12 -y
@@ -11,11 +11,18 @@ pip install --index-url https://download.pytorch.org/whl/cu124 \
 pip install -r requirements.txt
 ```
 
-Cần GPU NVIDIA. Script dùng Python của môi trường Conda đang kích hoạt, hoặc `env/bin/python`.
+Requires NVIDIA GPUs. Launchers use the active Conda environment or `env/bin/python`.
 
-## Dataset
+## Datasets
 
-Chuẩn bị ImageNet-1K theo cấu trúc, ảnh validation phải được chia vào thư mục lớp:
+Existing download commands for CIFAR-10/100, TinyImageNet, CIFAR-C, and SVHN:
+
+```bash
+python scripts/prepare_datasets.py --dataset all
+bash scripts/ood/prepare_datasets.sh
+```
+
+These scripts do **not** download ImageNet-1K. Prepare ImageNet separately, with validation images sorted into class folders:
 
 ```text
 datasets/ImageNet/
@@ -23,11 +30,11 @@ datasets/ImageNet/
 └── val/<class_id>/*.JPEG
 ```
 
-Cần đủ 1.281.167 ảnh train và 50.000 ảnh validation. Chỉnh `DATASET_ROOT` trong script nếu dữ liệu nằm ở nơi khác: trỏ tới thư mục chứa `ImageNet/`, hoặc chứa trực tiếp `train/` và `val/`.
+The loader requires 1,281,167 training images and 50,000 validation images. Set `DATASET_ROOT` in the launcher to the directory containing `ImageNet/`, or directly containing `train/` and `val/`.
 
-## Chỉnh tham số và chạy
+## Configure and run
 
-Chỉnh các giá trị ở đầu [scripts/run_imagenet.sh](scripts/run_imagenet.sh):
+Edit the settings at the top of [scripts/run_imagenet.sh](scripts/run_imagenet.sh):
 
 ```bash
 GPU_ID="0"
@@ -53,7 +60,7 @@ CONDSAM_EPS=1e-8
 CONDSAM_POWER_ITERS=""
 ```
 
-Giá trị rỗng dùng cấu hình trong `.ini`. CondSAM chạy đủ 10 tổ hợp rho–beta; `NPROC_PER_NODE` phải khớp số GPU trong `GPU_ID`. API key lấy từ biến môi trường hoặc W&B login hiện có.
+Empty values use the `.ini` configuration. CondSAM runs all 10 rho–beta combinations. `NPROC_PER_NODE` must match the number of GPUs in `GPU_ID`. Use an environment variable for the API key or an existing W&B login.
 
 ```bash
 bash scripts/run_imagenet.sh
