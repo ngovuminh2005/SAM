@@ -54,7 +54,7 @@ MOMENTUM=""
 RHO_LIST=(0.1 0.15 0.5 1 1.5)
 CONDSAM_BETA_LIST=(0.99 0.995)
 CONDSAM_EPS=1e-8
-CONDSAM_POWER_ITERS=""
+CONDSAM_POWER_ITERS=5
 ```
 
 Empty values use the `.ini` configuration. CondSAM runs all 10 rho–beta combinations. `NPROC_PER_NODE` must match the number of GPUs in `GPU_ID`. Use an environment variable for the API key or an existing W&B login.
