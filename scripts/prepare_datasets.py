@@ -8,7 +8,6 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = ROOT / "datasets"
-os.environ.setdefault("HF_HOME", str(DATA_ROOT / ".hf-cache"))
 
 
 def prepare_cifar(name: str, force: bool) -> None:
@@ -59,10 +58,14 @@ def prepare_tiny(force: bool) -> None:
 
 
 def main() -> None:
+    global DATA_ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=("all", "cifar10", "cifar100", "tiny-imagenet"), default="all")
+    parser.add_argument("--data-root", type=Path, default=DATA_ROOT)
     parser.add_argument("--force", action="store_true", help="replace existing prepared data")
     args = parser.parse_args()
+    DATA_ROOT = args.data_root.expanduser().resolve()
+    os.environ.setdefault("HF_HOME", str(DATA_ROOT / ".hf-cache"))
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     selected = ("cifar10", "cifar100", "tiny-imagenet") if args.dataset == "all" else (args.dataset,)
     for name in selected:

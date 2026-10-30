@@ -15,22 +15,19 @@ Requires NVIDIA GPUs. Launchers use the active Conda environment or `env/bin/pyt
 
 ## Datasets
 
-Existing download commands for CIFAR-10/100, TinyImageNet, CIFAR-C, and SVHN:
+Download and prepare ImageNet-1K:
 
 ```bash
-python scripts/prepare_datasets.py --dataset all
-bash scripts/ood/prepare_datasets.sh
+bash scripts/download_datasets.sh
 ```
 
-These scripts do **not** download ImageNet-1K. Prepare ImageNet separately, with validation images sorted into class folders:
+This downloads train/validation, verifies checksums, and prepares `datasets/ImageNet/{train,val}/<class_id>/*.JPEG`. Allow 300 GiB free during preparation. Rerun the command to resume an interrupted download. If ImageNet requires authentication, set `IMAGENET_COOKIES` to your exported cookies file.
 
-```text
-datasets/ImageNet/
-├── train/<class_id>/*.JPEG
-└── val/<class_id>/*.JPEG
-```
+For another disk, use `DATA_ROOT=/path/to/datasets bash scripts/download_datasets.sh`, then set `DATASET_ROOT` in the training launcher to that same directory.
 
-The loader requires 1,281,167 training images and 50,000 validation images. Set `DATASET_ROOT` in the launcher to the directory containing `ImageNet/`, or directly containing `train/` and `val/`.
+Edit `DATASETS` in the download script or pass dataset names to select `imagenet`, `cifar10`, `cifar100`, `tiny-imagenet`, `cifar10_c`, `cifar100_c`, or `svhn`.
+
+ImageNet downloader adapted from [Ultralytics YOLOv5](https://github.com/ultralytics/yolov5/blob/af08ba156fd58ed5b0fe7e4e58a22c72c3cdd0ce/data/scripts/get_imagenet.sh); see [attribution and license](third_party/ultralytics/NOTICE.md).
 
 ## Configure and run
 
