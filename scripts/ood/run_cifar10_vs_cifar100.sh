@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Edit values here. One or more existing trained vision run directories.
-RUN_DIRS=() # e.g. ("logs/CIFAR10_CondSAM_resnet_rho0.05_lr0.1")
+RUN_DIRS=()
 CHECKPOINT="final.model"
 SETTING="configs/ood/cifar10_vs_cifar100.json"
 GPU_ID="0"
-DEVICE="auto" # auto | cuda | cpu
-MAX_EXAMPLES=0 # full dataset; positive values are diagnostic subsets only
+DEVICE="auto"
+MAX_EXAMPLES=0
 WANDB_PROJECT="CondSAM"
 WANDB_MODE="online"
-DATA_ROOT="" # empty uses <project>/datasets
+DATA_ROOT=""
 if (( $# )); then RUN_DIRS=("$@"); fi
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"

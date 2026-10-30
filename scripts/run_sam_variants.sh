@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export SAM_CONSOLE_EVAL_ONLY=1 # Print training metrics/time only on eval epochs.
+export SAM_CONSOLE_EVAL_ONLY=1
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
@@ -11,32 +11,14 @@ export WANDB_PROJECT="${WANDB_PROJECT:-SAMVariants}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 
 
-# Usage:
-#   bash scripts/run_sam_variants.sh [config_path] [log_prefix] [extra_args...]
-# Runs SGD and SAM-family baselines on one config, excluding CondSAM.
-# Log folder names are built in main.py as:
-#   <dataset>_<optimizer>_<model>_rho<rho>_lr<lr>
-#   e.g. CIFAR100_ASAM_resnet_rho0.5_lr0.1 (dataset comes from the config's dataset= field).
-# Example:
-#   bash scripts/run_sam_variants.sh configs/CIFAR100_WRN16_4.ini cifar100_wrn
-#   bash scripts/run_sam_variants.sh configs/CIFAR100_VGG16.ini cifar100_vgg16
-#   bash scripts/run_sam_variants.sh configs/CIFAR100_PyramidNet110.ini cifar100_pyramidnet110
-#   bash scripts/run_sam_variants.sh configs/CIFAR10_WRN16_4.ini cifar10_wrn
-#   bash scripts/run_sam_variants.sh configs/CIFAR10_VGG16.ini cifar10_vgg16
-#   bash scripts/run_sam_variants.sh configs/CIFAR10_PyramidNet110.ini cifar10_pyramidnet110
-#   bash scripts/run_sam_variants.sh configs/ImageNet_WRN16_4.ini imagenet_wrn16_4
-#   bash scripts/run_sam_variants.sh configs/ImageNet_VGG16.ini imagenet_vgg16
-#   bash scripts/run_sam_variants.sh configs/ImageNet_PyramidNet50.ini imagenet_pyramidnet50
 
 CONFIG_PATH=${1:-configs/CIFAR100_DenseNet121.ini}
 LOG_PREFIX=${2:-sam_variants}
 EXTRA_ARGS=("${@:3}")
 
-# First segment of config basename matches dataset in our configs (CIFAR100_..., ImageNet_...).
 CONFIG_BASENAME=$(basename "${CONFIG_PATH}" .ini)
 DATASET_HINT="${CONFIG_BASENAME%%_*}"
 
-# Select GPU by index (0 or 1). Override with: GPU_ID=1 bash ...
 GPU_ID=${GPU_ID:-1}
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 

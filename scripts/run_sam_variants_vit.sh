@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export SAM_CONSOLE_EVAL_ONLY=1 # Print training metrics/time only on eval epochs.
+export SAM_CONSOLE_EVAL_ONLY=1
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
@@ -11,26 +11,14 @@ export WANDB_PROJECT="CondSAM"
 export WANDB_MODE="${WANDB_MODE:-online}"
 
 
-# Usage:
-#   bash scripts/run_sam_variants_vit.sh [config_path] [log_prefix] [extra_args...]
-# Runs SGD and SAM-family baselines on one ViT config.
-# Log folder names are built in main.py as:
-#   <dataset>_<optimizer>_<model>_rho<rho>_lr<lr>
-#   e.g. CIFAR100_ASAM_resnet_rho0.5_lr0.1 (dataset comes from the config's dataset= field).
-# Example:
-#   bash scripts/run_sam_variants_vit.sh configs/CIFAR10_ViT_Ti.ini cifar10_vit --epochs 200
-#   bash scripts/run_sam_variants_vit.sh configs/CIFAR100_ViT_Ti.ini cifar100_vit --epochs 200
-#   bash scripts/run_sam_variants_vit.sh configs/TinyImageNet_ViT_Ti.ini tinyimagenet_vit --epochs 200
 
 CONFIG_PATH=${1:-configs/TinyImageNet_ViT_B16.ini}
 LOG_PREFIX=${2:-sam_variants}
 EXTRA_ARGS=("${@:3}")
 
-# First segment of config basename matches dataset in our configs (CIFAR100_..., ImageNet_...).
 CONFIG_BASENAME=$(basename "${CONFIG_PATH}" .ini)
 DATASET_HINT="${CONFIG_BASENAME%%_*}"
 
-# Select GPU by index (0 or 1). Override with: GPU_ID=1 bash ...
 GPU_ID=${GPU_ID:-1}
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 

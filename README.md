@@ -55,13 +55,15 @@ BATCH_SIZE=256
 LEARNING_RATE=0.1
 WEIGHT_DECAY=0.0001
 MOMENTUM=0.9
-RHO=0.05
-CONDSAM_BETA=0.99
+RHO_LIST=(0.1 0.15 0.5 1 1.5)
+CONDSAM_BETA_LIST=(0.99 0.995)
 CONDSAM_EPS=1e-8
 CONDSAM_POWER_ITERS=5
 ```
 
-These are editable settings, not tuned results. Empty `BATCH_SIZE`, `LEARNING_RATE`, `WEIGHT_DECAY`, `MOMENTUM`, `RHO`, and CondSAM settings use the selected `.ini` values. `RHO` overrides the selected optimizer's method-specific radius; SGD, Adam, and AdamW ignore it. CondSAM settings apply to `CondSAM`, `CondSam1`, `CondSam2`, and `CondSAM_adam`.
+Edit the literal values and arrays directly in the `.sh` file. The default CondSAM sweep runs all **10 combinations** of the five `RHO_LIST` values and two `CONDSAM_BETA_LIST` values, sequentially. Each run has a separate W&B name containing its rho and beta.
+
+Empty `BATCH_SIZE`, `LEARNING_RATE`, `WEIGHT_DECAY`, `MOMENTUM`, and `CONDSAM_POWER_ITERS` use the selected `.ini` values. `RHO_LIST=()` uses the configured radius for one sweep position; `CONDSAM_BETA_LIST=()` uses the configured beta. A single-element list runs just that value. Rho values override the selected optimizer's method-specific radius. CondSAM beta settings apply to `CondSAM`, `CondSam1`, `CondSam2`, and `CondSAM_adam`; other SAM optimizers sweep rho only. SGD, Adam, and AdamW run once and ignore both lists.
 
 Available ImageNet configurations:
 
@@ -106,12 +108,12 @@ Artifacts are saved under `logs/<dataset>_<optimizer>_<model>_rho<rho>_lr<lr>/`,
 
 ## CondSAM parameter sweeps
 
-For multiple radii, beta values, power iterations, or repeats, edit [scripts/run_condsam_rho.sh](scripts/run_condsam_rho.sh):
+For CondSAM sweeps that also vary power iterations or repeats, edit [scripts/run_condsam_rho.sh](scripts/run_condsam_rho.sh):
 
 ```bash
 CONFIG_PATH="configs/ImageNet_ResNet50.ini"
-RHO_LIST=(0.05 0.1)
-CONDSAM_BETA_LIST=(0.95 0.99)
+RHO_LIST=(0.1 0.15 0.5 1 1.5)
+CONDSAM_BETA_LIST=(0.99 0.995)
 CONDSAM_POWER_ITERS_LIST=(1 5)
 TOP_K=(1 5)
 REPEATS=1

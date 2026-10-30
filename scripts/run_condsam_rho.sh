@@ -1,41 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: scripts/run_condsam_rho.sh [config.ini] [log_prefix] [extra main.py args...]
-# Edit CONFIG_PATH, RHO_LIST, CONDSAM_BETA_LIST, CONDSAM_POWER_ITERS_LIST,
-# EPOCHS and REPEATS below before running.
 
-# GPU selection and number of training processes (one process per GPU).
-GPU_ID="${GPU_ID:-0}" # Comma-separated GPU indices.
+GPU_ID="${GPU_ID:-0}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
-ALLOW_SHARED_GPU=0 # Set to 1 only when deliberately sharing the GPU.
+ALLOW_SHARED_GPU=0
 
-# W&B settings. Uses an existing login when WANDB_API_KEY is empty.
 export WANDB_API_KEY="${WANDB_API_KEY:-}"
 export WANDB_PROJECT="${WANDB_PROJECT:-CondSAM}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
-export SAM_CONSOLE_EVAL_ONLY=1 # Print training metrics/time only on eval epochs.
+export SAM_CONSOLE_EVAL_ONLY=1
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 source "${PROJECT_ROOT}/scripts/lib/sweep_process.sh"
-# Edit sweep values directly here.
 CONFIG_PATH="configs/TinyImageNet_ResNet50.ini"
 LOG_PREFIX="condsam_rho_sweep"
 EPOCHS=200
 EVAL_EVERY=20
-TOP_K=(1 5) # Log all listed top-k accuracies; use () to disable.
-CONDSAM_BETA_LIST=(0.99)
+TOP_K=(1 5)
+CONDSAM_BETA_LIST=(0.99 0.995)
 CONDSAM_EPS=1e-8
-CONDSAM_POWER_ITERS_LIST=(5) # Positive integers.
-#RHO_LIST=(0.05 0.1 0.15 0.5 0.01 0.045)
-RHO_LIST=(1)
+CONDSAM_POWER_ITERS_LIST=(5)
+RHO_LIST=(0.1 0.15 0.5 1 1.5)
 REPEATS=1
 DATASET_ROOT="${PROJECT_ROOT}/datasets"
 PYTHON="${PROJECT_ROOT}/env/bin/python"
 EXTRA_ARGS=()
-# Optional positional config/prefix and extra CLI arguments remain supported.
 CONFIG_PATH=${1:-${CONFIG_PATH}}
 LOG_PREFIX=${2:-${LOG_PREFIX}}
 if (( $# > 2 )); then EXTRA_ARGS=("${@:3}"); fi
@@ -46,15 +38,12 @@ export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-${LOG_PREFIX}}"
 CONFIG_TAG="$(basename "${CONFIG_PATH}")"
 CONFIG_TAG="${CONFIG_TAG%.*}"
 
-# Match the number of processes to the selected GPUs.
 IFS=',' read -r -a gpu_ids <<< "${GPU_ID}"
 [[ "${NPROC_PER_NODE}" =~ ^[1-9][0-9]*$ ]] && (( NPROC_PER_NODE == ${#gpu_ids[@]} )) || {
     echo "NPROC_PER_NODE must match the number of indices in GPU_ID" >&2
     exit 2
 }
 
-# Hold the lock for the whole sweep, including children. Repeating this command
-# in another terminal must not silently start another sweep on the same GPU.
 command -v flock >/dev/null || { echo "Missing flock (util-linux)" >&2; exit 2; }
 lock_tag="${GPU_ID//[^a-zA-Z0-9_-]/_}"
 exec {gpu_lock_fd}>"/tmp/condsam-${UID}-gpu-${lock_tag}.lock"

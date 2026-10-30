@@ -1,4 +1,3 @@
-# Shared launcher sourced by each task script.
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 PYTHON="${PROJECT_ROOT}/env/bin/python"

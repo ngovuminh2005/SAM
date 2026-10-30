@@ -2,11 +2,6 @@
 set -euo pipefail
 export SAM_CONSOLE_EVAL_ONLY=1
 
-# Baseline robustness to training-label noise; training settings come from INI.
-# Usage:
-#   scripts/run_condsam_robustness.sh [config.ini] [log_prefix] [extra main.py args...]
-#   scripts/run_condsam_robustness.sh --dataset CIFAR100 --noise-rates 0.4 [--log-prefix NAME]
-# With no arguments, completes CIFAR-10 first, then CIFAR-100, using WRN-16-4.
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
@@ -14,7 +9,7 @@ source "${PROJECT_ROOT}/scripts/lib/sweep_process.sh"
 
 CONFIGS=(configs/CIFAR10_WRN16_4.ini configs/CIFAR100_WRN16_4.ini)
 NOISE_RATES=(0.2 0.4 0.8)
-LABEL_NOISE_SEED=1337 # Label corruption seed; training uses 42 + rank.
+LABEL_NOISE_SEED=1337
 OPTIMIZERS=(SGD SAM ASAM ESAM GSAM FisherSAM MSAM FriendlySAM MongeSAM)
 GPU_ID="0"
 NPROC_PER_NODE=1
@@ -27,7 +22,6 @@ DATA_ROOT="${DATA_ROOT:-${PROJECT_ROOT}/datasets}"
 EXTRA_ARGS=()
 
 if (( $# > 0 )) && [[ "$1" != --* ]]; then
-    # Preserve the original positional interface.
     CONFIGS=("$1")
     LOG_PREFIX=${2:-${LOG_PREFIX}}
     if (( $# > 2 )); then EXTRA_ARGS=("${@:3}"); fi
@@ -132,8 +126,6 @@ for config in "${CONFIGS[@]}"; do
             cmd=("${PYTHON}" -m torch.distributed.run --standalone --master_port "${port}"
                  --nproc_per_node "${NPROC_PER_NODE}" main.py --ifile "${config}")
             cmd+=("${EXTRA_ARGS[@]}")
-            # Enforce the selected optimizer and fixed seed; other training settings use INI defaults.
-            # Separate output parents keep each noise level identifiable despite auto-generated logSubDir.
             cmd+=(--optimizer "${optimizer}" --rndSeed False
                   --logDir "${RUN_ROOT}/${run_name}" --contin False --truncate False)
             echo "[RUN] ${optimizer} config=${cfg_tag} noise=${rate} seed=42 label_noise_seed=${LABEL_NOISE_SEED}"

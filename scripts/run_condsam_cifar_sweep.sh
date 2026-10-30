@@ -2,8 +2,6 @@
 set -euo pipefail
 export SAM_CONSOLE_EVAL_ONLY=1
 
-# Sweep the CIFAR model/config matrix with CondSAM.
-# Usage: scripts/run_condsam_cifar_sweep.sh [log_prefix] [rho] [beta] [power_iters]
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"

@@ -1,25 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GPU settings: edit these values directly.
-GPU_ID="0"             # GPU indices, e.g. "0" or "0,1".
-NPROC_PER_NODE=1        # Number of training GPUs; must match GPU_ID.
+GPU_ID="0"
+NPROC_PER_NODE=1
 
-# Paste your W&B API key between the quotes.
-export WANDB_API_KEY=""
+export WANDB_API_KEY="${WANDB_API_KEY:-}"
 
-# Train each baseline, then evaluate its final checkpoint at severities 1..5.
-# Usage: bash scripts/run_sam_variants_cifar_c.sh [config.ini ...]
-# Defaults to five backbones on both CIFAR datasets. CondSAM excluded.
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 source "${PROJECT_ROOT}/scripts/lib/sweep_process.sh"
 
-# Prefer the activated Conda environment; retain the local env as a fallback.
 PYTHON="${PYTHON:-${CONDA_PREFIX:-${PROJECT_ROOT}/env}/bin/python}"
 DATA_ROOT="${DATA_ROOT:-${PROJECT_ROOT}/datasets}"
 DEVICE="${DEVICE:-auto}"
-MAX_EXAMPLES="${MAX_EXAMPLES:-0}" # OOD only; 0 evaluates all examples.
+MAX_EXAMPLES="${MAX_EXAMPLES:-0}"
 export WANDB_PROJECT="variants-cifar-c"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
@@ -49,10 +43,8 @@ fi
 OPTIMIZERS=(SGD SAM ASAM MSAM ESAM FriendlySAM FisherSAM MongeSAM GSAM)
 
 [[ -x "${PYTHON}" ]] || { echo "Missing Python executable: ${PYTHON}" >&2; exit 2; }
-# Do not reuse an old batch: evaluation must use this invocation's checkpoint.
 [[ ! -e "${RUN_ROOT}" ]] || { echo "RUN_ROOT already exists: ${RUN_ROOT}; choose a new directory." >&2; exit 2; }
 
-# Read the actual dataset field, not the config filename. Check everything before training.
 DATASETS=()
 for config in "${CONFIGS[@]}"; do
     dataset="$("${PYTHON}" - "${config}" <<'PY'
@@ -99,7 +91,6 @@ for index in "${!CONFIGS[@]}"; do
         cmd=("${PYTHON}" -m torch.distributed.run --standalone --nproc_per_node="${NPROC_PER_NODE}"
              main.py --ifile "${config}" --optimizer "${optimizer}"
              --logDir "${case_root}" --contin False --truncate False --rndSeed False)
-        # Otherwise use epochs, evalEvery and all optimizer parameters from the config.
         if [[ -n "${EPOCHS:-}" ]]; then cmd+=(--epochs "${EPOCHS}"); fi
         if [[ -n "${EVAL_EVERY:-}" ]]; then cmd+=(--evalEvery "${EVAL_EVERY}"); fi
         echo "[TRAIN] ${case_name} seed=42 wandb=${WANDB_PROJECT}/${WANDB_RUN_GROUP}/${WANDB_NAME}"
@@ -112,7 +103,6 @@ for index in "${!CONFIGS[@]}"; do
             continue
         fi
 
-        # main.py generates logSubDir itself. The isolated parent identifies the exact new run.
         shopt -s nullglob
         checkpoints=("${case_root}"/*/final.model)
         if (( ${#checkpoints[@]} != 1 )); then

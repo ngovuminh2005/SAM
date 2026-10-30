@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export SAM_CONSOLE_EVAL_ONLY=1 # Print training metrics/time only on eval epochs.
+export SAM_CONSOLE_EVAL_ONLY=1
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
@@ -11,17 +11,12 @@ export WANDB_PROJECT="CondSAM"
 export WANDB_MODE="${WANDB_MODE:-online}"
 
 
-# Usage:
-#   bash scripts/run_model_sweep.sh [log_prefix] [epochs] [cifar_profile]
-# Example:
-#   bash scripts/run_model_sweep.sh model_sweep 5 cifar10
 
 LOG_PREFIX=${1:-model_sweep}
 EPOCHS=${2:-5}
 CIFAR_PROFILE=${3:-cifar100}
 RUN_SUFFIX=${RUN_SUFFIX:-$(date +%Y%m%d_%H%M%S)_$RANDOM}
 
-# Select GPU by index (0 or 1). Override with: GPU_ID=1 bash ...
 GPU_ID=${GPU_ID:-0}
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
@@ -68,13 +63,11 @@ run_case() {
         "$@"
 }
 
-# CIFAR models
 run_case wrn_sgd "${CIFAR_WRN_CFG}" --model WRN --optimizer SGD
 run_case resnet_sgd "${CIFAR_RESNET_CFG}" --model resnet --optimizer SGD --depth 50
 run_case vgg16_sgd "${CIFAR_VGG_CFG}" --model VGG --optimizer SGD --depth 16 --BN True
 run_case pyramidnet_sgd "${CIFAR_PYRAMID_CFG}" --model PyramidNet --optimizer SGD --depth 110 --pyramidAlpha 270 --pyramidBottleneck True
 
-# ImageNet models
 run_case wrn16_4_imagenet_sgd "${IMGNET_WRN_CFG}" --model WRN --optimizer SGD --depth 16 --widthFactor 4
 run_case resnet50_imagenet_sgd "${IMGNET_RESNET_CFG}" --model resnet --optimizer SGD --depth 50
 run_case vgg16_imagenet_sgd "${IMGNET_VGG_CFG}" --model VGG --optimizer SGD --depth 16 --BN True

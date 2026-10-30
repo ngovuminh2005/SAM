@@ -1,6 +1,3 @@
-# Source from training sweeps. Nothing launches until run_training is called.
-# Waiting on a tracked child lets Bash handle Ctrl+C immediately; torchrun
-# handles SIGTERM by stopping its training workers, including separate sessions.
 _sweep_active_pid=""
 
 _sweep_cleanup() {
@@ -30,7 +27,6 @@ run_training() {
     _sweep_active_pid=$!
     wait "${_sweep_active_pid}" || status=$?
     _sweep_active_pid=""
-    # A terminated run must not be recorded as an ordinary failed grid point.
     if (( status >= 128 )); then
         exit "${status}"
     fi

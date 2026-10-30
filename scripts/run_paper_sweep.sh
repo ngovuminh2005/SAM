@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export SAM_CONSOLE_EVAL_ONLY=1 # Print training metrics/time only on eval epochs.
+export SAM_CONSOLE_EVAL_ONLY=1
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 source "${PROJECT_ROOT}/scripts/lib/sweep_process.sh"
 
-# Edit this section directly. Running the script starts the selected experiments.
-SECTION="image" # image | adam | glue | noise | hessian
-OPTIMIZERS=(CondSAM) # paper image methods: SGD SAM ASAM ESAM GSAM FisherSAM MSAM FriendlySAM MongeSAM
+SECTION="image"
+OPTIMIZERS=(CondSAM)
 ADAM_OPTIMIZERS=(Adam Adam_SAM Adam_FriendlySAM CondSAM)
 GLUE_OPTIMIZERS=(SGD SAM CondSAM)
 RHO_LIST=(0.01 0.045 0.05 0.1 0.15 0.5)
@@ -18,13 +17,13 @@ GPU_ID="0"
 NPROC_PER_NODE=1
 CONDSAM_BETA=0.95
 CONDSAM_EPS=1e-8
-CONDSAM_POWER_ITERS=${CONDSAM_POWER_ITERS:-1} # Positive integer; editable here or via environment.
+CONDSAM_POWER_ITERS=${CONDSAM_POWER_ITERS:-1}
 WANDB_PROJECT="CondSAM"
-WANDB_MODE="online" # tracker falls back to offline without login
+WANDB_MODE="online"
 LOG_PREFIX="paper_sweep"
 DATASET_ROOT="${PROJECT_ROOT}/datasets"
 PYTHON="${PROJECT_ROOT}/env/bin/python"
-DRY_RUN=false # true prints commands only
+DRY_RUN=false
 TASKS=(cola sst2 mrpc qqp mnli qnli rte wnli stsb)
 GLUE_RHOS=(0.002 0.005 0.005 0.005 0.005 0.005 0.004 0.004 0.004)
 GLUE_EPOCHS=3
@@ -36,7 +35,7 @@ HESSIAN_BATCH_SIZE=128
 HESSIAN_ITERS=100
 HESSIAN_K=5
 NOISE_RATES=(0.2 0.4 0.8)
-HESSIAN_RUN_DIRS=() # paths containing params.json and final.model; fill for SECTION=hessian
+HESSIAN_RUN_DIRS=()
 IMAGE_CONFIGS=(
  configs/CIFAR10_ResNet50.ini configs/CIFAR10_WRN16_4.ini
  configs/CIFAR10_PyramidNet110.ini configs/CIFAR10_WRN28_10.ini
