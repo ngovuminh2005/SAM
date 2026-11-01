@@ -15,11 +15,11 @@ parameters:
   wd:
     value: 0.1
   sam-rho:
-    values: [0.005, 0.01, 0.05]
+    values: [0.05 0.5 1.5 1]
   condsam-beta:
-    values: [0.9, 0.95, 0.99]
+    values: [0.99]
   condsam-power-iters:
-    values: [1, 2, 4]
+    values: [5]
   optimizer:
     value: adamw
   sam:
