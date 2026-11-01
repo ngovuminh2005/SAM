@@ -1,15 +1,23 @@
-numpy>=1.24
-h5py>=3.9
-scipy>=1.10
-pillow>=10.0
-einops>=0.7
-matplotlib>=3.7
-pypdf>=4.0
-# Install torch/torchvision/torchaudio separately using the CUDA-specific command in README.@22
+# Python 3.10. Core versions match the environment used for integration checks.
+torch==2.6.0
+torchvision==0.21.0
+numpy>=1.26,<3
+Pillow>=10,<13
+tqdm>=4.66,<5
+ftfy>=6.2,<7
+regex>=2024.11.6
 
-# GLUE / BERT (nlp/run_glue_bert.py; evaluate.load("glue") needs sklearn)
-transformers>=4.36
-datasets>=2.16
-evaluate>=0.4
-scikit-learn>=1.3
-wandb>=0.30,<0.31
+# Dataset loaders and plotting (src.datasets imports the WILDS loaders).
+wilds==2.0.0
+pandas>=2.2,<3
+scipy>=1.11,<2
+scikit-learn>=1.4,<2
+matplotlib>=3.8,<4
+# WILDS -> outdated still imports pkg_resources.
+setuptools>=70,<81
+
+# W&B 0.27.2 was tested with training, sweeps, tables and offline logging.
+wandb==0.27.2
+click>=8.2,<9
+PyYAML>=6,<7
+# pip installs transitive dependencies too; do not use --no-deps with this file.

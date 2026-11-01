@@ -1,0 +1,30 @@
+name: sam-adamw-rho
+method: grid
+program: scripts/run_sam.sh
+metric:
+  name: epoch_eval/ImageNet/top1
+  goal: maximize
+command:
+  - ${env}
+  - bash
+  - ${program}
+  - ${args}
+parameters:
+  lr:
+    value: 0.001
+  wd:
+    value: 0.1
+  sam-rho:
+    values: [0.05, 0.01, 0.02, 0.005]
+  optimizer:
+    value: adamw
+  sam:
+    value: sam
+  sam-config:
+    value: configs/sam.ini
+  epochs:
+    value: 10
+  batch-size:
+    value: 128
+  wandb-mode:
+    value: online

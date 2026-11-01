@@ -1,32 +1,57 @@
-# Python environments and generated files
-env/
-.venv/
-venv/
-conda_env/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Local data, logs, and experiment outputs
+# Python environments and local tools.
+/env/
+/.venv/
+/venv/
+/.conda/
+/.codex/
+/.agents/
+
+# Datasets, training outputs, model weights and caches.
+/data/
 /datasets/
+/model/
+/models/
+/checkpoint/
+/checkpoints/
+/ckpt/
+/ckpts/
+/cache/
+/.cache/
+/wandb/
+/runs/
 /logs/
-wandb/
-**/wandb/
-*.h5
-*.hdf5
-*.log
-
-# Model checkpoints and weights
-*.model
+/outputs/
+/results/
+/images/
 *.pt
 *.pth
 *.ckpt
 *.safetensors
-**/ckpt/
-**/ckpts/
-**/checkpoint/
-**/checkpoints/
+*.onnx
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.log
+*.pid
 
-# Local secrets and generated source bundles
+# Local credentials and machine-specific files.
 .env
 .env.*
-*.zip
+!.env.example
+.aws/
+.ssh/
+*.pem
+*.key
+.DS_Store

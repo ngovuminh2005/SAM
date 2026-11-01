@@ -1,0 +1,34 @@
+name: condsam-adamw-rho-beta-poweriters
+method: grid
+program: scripts/run_sam.sh
+metric:
+  name: epoch_eval/ImageNet/top1
+  goal: maximize
+command:
+  - ${env}
+  - bash
+  - ${program}
+  - ${args}
+parameters:
+  lr:
+    value: 0.001
+  wd:
+    value: 0.1
+  sam-rho:
+    values: [0.005, 0.01, 0.05]
+  condsam-beta:
+    values: [0.9, 0.95, 0.99]
+  condsam-power-iters:
+    values: [1, 2, 4]
+  optimizer:
+    value: adamw
+  sam:
+    value: condsam
+  sam-config:
+    value: optimizer/defaults.ini
+  epochs:
+    value: 10
+  batch-size:
+    value: 128
+  wandb-mode:
+    value: online

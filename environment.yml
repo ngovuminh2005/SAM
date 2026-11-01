@@ -1,0 +1,15 @@
+# Run from the repository root:
+# conda env update --prefix ./env --file environment.yml
+name: wiseft
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip>=24
+  - setuptools>=70,<81
+  - wheel
+  - git
+  - curl
+  - wget
+  - pip:
+      - -r requirements.txt

@@ -1,0 +1,34 @@
+name: friendlysam-adamw-rho-sigma-lambda
+method: grid
+program: scripts/run_sam.sh
+metric:
+  name: epoch_eval/ImageNet/top1
+  goal: maximize
+command:
+  - ${env}
+  - bash
+  - ${program}
+  - ${args}
+parameters:
+  lr:
+    value: 0.001
+  wd:
+    value: 0.1
+  sam-rho:
+    values: [0.005, 0.01, 0.05]
+  friendlysam-sigma:
+    values: [0.5, 1.0, 2.0]
+  friendlysam-lambda:
+    values: [0.9, 0.95]
+  optimizer:
+    value: adamw
+  sam:
+    value: friendlysam
+  sam-config:
+    value: optimizer/defaults.ini
+  epochs:
+    value: 10
+  batch-size:
+    value: 128
+  wandb-mode:
+    value: online
