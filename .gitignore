@@ -1,0 +1,13 @@
+# Environment
+env/
+__pycache__/
+
+# Datasets
+imagenet/
+data/
+*.ffcv
+
+# Runs: logs, checkpoints, W&B
+logs/
+wandb/
+*.pt
