@@ -11,7 +11,7 @@ command:
   - ${args}
 parameters:
   model:
-    value: ViT-B/32
+    value: ViT-L/14@336px
   lr:
     value: 0.00003
   wd:

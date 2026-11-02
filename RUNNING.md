@@ -82,10 +82,10 @@ interactive login. Set `--wandb-mode online` after `wandb login` (or provide
 `wandb/` directory and can later be uploaded with `wandb sync`.
 `--wandb-entity`, `--wandb-group`, `--wandb-dir` and `--log-every` customize logging.
 
-The current model is OpenAI CLIP `ViT-B/32` at 224-pixel resolution, matching
-the upstream README example. The loader also accepts official `ViT-L/14`
-(224 pixels) and `ViT-L/14@336px` (336 pixels) checkpoints. The latter is the
-paper's default model. Weights are downloaded on first use and checked against
+All sweep YAMLs now select OpenAI CLIP `ViT-L/14@336px` at 336-pixel resolution,
+the paper's default model. The single-run script and CLI example above use
+`ViT-B/32` unless overridden. The loader also accepts official `ViT-L/14`
+(224 pixels) checkpoints. Weights are downloaded on first use and checked against
 the SHA256 embedded in OpenAI's model URL; model dimensions and preprocessing
 resolution are inferred from the checkpoint.
 
@@ -139,7 +139,8 @@ SAM_CONFIG=configs/sam.ini SAVE_DIR=models/sam-config bash scripts/run_sam.sh
 ```
 
 The example scripts follow the original README's end-to-end AdamW recipe: learning rate
-`3e-5`, weight decay `0.1`, betas `(0.9, 0.999)` and epsilon `1e-8`. They use ViT-B/32,
+`3e-5`, weight decay `0.1`, betas `(0.9, 0.999)` and epsilon `1e-8`. The single-run
+script uses ViT-B/32; every sweep YAML selects ViT-L/14@336px. Both use
 batch size `512`, 10 epochs, and the default 11-alpha/five-dataset final
 suite. `SAVE_DIR`, `RUN_NAME`, `MODEL`, `DATA_ROOT`, `LR`, `WEIGHT_DECAY`,
 `BATCH_SIZE`, `EPOCHS`, `NUM_WORKERS` and `BASE_OPTIMIZER` override shell defaults.
