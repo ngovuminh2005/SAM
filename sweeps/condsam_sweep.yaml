@@ -1,0 +1,37 @@
+# SAM-specific grid ported from wise-ft configs/condsam_sweep.yaml; base recipe is
+# FFCV's ResNet-18 16-epoch config. Run from the repo root:
+#   wandb sweep sweeps/condsam_sweep.yaml && wandb agent <sweep-id>
+name: rn18-16ep-condsam
+method: grid
+program: train_imagenet.py
+metric:
+  name: val/top_1
+  goal: maximize
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - --config-file=rn18_configs/rn18_16_epochs.yaml
+  - --config-file=sam_configs/condsam.yaml
+  - ${args}
+parameters:
+  data.train_dataset:
+    value: data/train_500_1.0_90.ffcv
+  data.val_dataset:
+    value: data/val_500_1.0_90.ffcv
+  data.num_workers:
+    value: 18
+  logging.folder:
+    value: logs
+  logging.log_level:
+    value: 1
+  training.seed:
+    value: 42
+  wandb.mode:
+    value: online
+  sam.rho:
+    values: [0.05, 0.5, 1.5, 1]
+  sam.condsam_beta:
+    values: [0.99]
+  sam.condsam_power_iters:
+    values: [5]

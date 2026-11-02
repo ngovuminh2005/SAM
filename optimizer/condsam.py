@@ -1,32 +1,25 @@
-"""SAM with empirical, pooled Kronecker-factor perturbations (not natural gradient)."""
+"""Empirical Kronecker-factor conditioning for SAM perturbations only."""
+
 import math
+import threading
+from contextlib import contextmanager
 
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
 from .sam import SAM
-from utility.args import Args
-from utility.loss import smooth_crossentropy
 
 
 class CondSAM(SAM):
     STATS_CHUNK_BYTES = 256 * 1024**2
-    INIT_FACTORS_FROM_BATCH = False
 
-    def __init__(self, params, lr=0.1, momentum=0.9, weight_decay=0.01,
-                 nesterov=False, rho=0.3, beta=0.95, eps=1e-8, power_iters=1):
-        if not math.isfinite(rho) or rho < 0:
-            raise ValueError('CondSAM rho must be finite and nonnegative')
+    def __init__(self, params, rho=0.05, beta=0.95, eps=1e-8, power_iters=1):
+        super().__init__(params, rho=rho, eps=eps)
         if not math.isfinite(beta) or not 0 <= beta < 1:
             raise ValueError('CondSAM beta must be in [0, 1)')
-        if not math.isfinite(eps) or eps <= 0:
-            raise ValueError('CondSAM eps must be finite and positive')
         self._validate_power_iters(power_iters)
-        super().__init__(params, lr, momentum, weight_decay, nesterov, rho)
-        for group in self.param_groups:
-            group.update(beta=beta, eps=eps, power_iters=power_iters)
-        self._original = {}
+        self.options.update(beta=beta, power_iters=power_iters)
         self._distributed = False
         self._process_group = None
         self._stats_buffers = {}
@@ -44,9 +37,6 @@ class CondSAM(SAM):
             dist.all_reduce(invalid, op=dist.ReduceOp.MAX, group=self._process_group)
         if invalid.item():
             raise FloatingPointError(f'CondSAM non-finite {name}')
-
-    def _finite(self, value, name):
-        self._finite_many([value], name)
 
     @staticmethod
     def _outer_sum(rows, out=None):
@@ -97,7 +87,7 @@ class CondSAM(SAM):
             count.add_(a.shape[0])
 
     def _layers(self, model):
-        owned = {id(p) for g in self.param_groups for p in g['params']}
+        owned = {id(p) for p in self.params}
         # Shared weights with unsupported owners (e.g. tied embeddings) use SAM.
         owners = {}
         for module in model.modules():
@@ -108,24 +98,8 @@ class CondSAM(SAM):
                 if p.requires_grad and all(isinstance(m, torch.nn.Linear) or
                     (isinstance(m, torch.nn.Conv2d) and m.groups == 1) for m in modules)]
 
-    def _hook(self, p, observations, handles, batch_size):
-        def forward(module, inputs, output):
-            if not output.requires_grad:
-                return
-            # Clone protects statistics from subsequent inplace operations.
-            activation = inputs[0].detach().clone()
-
-            @torch.no_grad()
-            def backward(grad):
-                self._accumulate(module, activation, grad.detach(), batch_size, observations[p])
-                return grad
-
-            handles.append(output.register_hook(backward))
-        return forward
-
     @torch.no_grad()
     def _update_factors(self, observations):
-        groups = {p: group for group in self.param_groups for p in group['params']}
         if self._distributed:
             for values in observations.values():
                 for value in values:
@@ -133,7 +107,7 @@ class CondSAM(SAM):
         self._finite_many([value for values in observations.values() for value in values], 'factor statistics')
         power_values = []
         for p, (a_sum, b_sum, count) in observations.items():
-            power_iters = groups[p]['power_iters']
+            power_iters = self.options['power_iters']
             self._validate_power_iters(power_iters)
             state = self.state[p]
             first_observation = 'A' not in state
@@ -150,16 +124,11 @@ class CondSAM(SAM):
                         src = dist.get_global_rank(self._process_group, 0)
                         dist.broadcast(v, src=src, group=self._process_group)
                     state[key] = v
-            beta = groups[p]['beta']
+            beta = self.options['beta']
             active = count > 0
             weight = active.float() * (1 - beta)
             for key, total in [('A', a_sum), ('B', b_sum)]:
-                if first_observation and self.INIT_FACTORS_FROM_BATCH:
-                    # Statistics have already been pooled across DDP workers.
-                    # Seed once; EMA starts with the next observed batch.
-                    state[key].copy_(total / count.clamp_min(1))
-                else:
-                    state[key].lerp_(total / count.clamp_min(1), weight)
+                state[key].lerp_(total / count.clamp_min(1), weight)
             for matrix, vector in [('A', 'x'), ('B', 'y')]:
                 for _ in range(power_iters):
                     v = state[matrix] @ state[vector]
@@ -183,120 +152,85 @@ class CondSAM(SAM):
                       (2 * g.numel() * (g.square().sum() + eps))) * g
         direction = torch.where(torch.count_nonzero(direction) == 0, g, direction)
         return direction.reshape_as(gradient)
+    @contextmanager
+    def observe(self, model, batch_size):
+        """Collect first-pass statistics, including DataParallel replicas.
 
-    @torch.no_grad()
-    def move_up(self):
-        entries = []
-        check_values = []
-        for group in self.param_groups:
-            if not math.isfinite(group['rho']) or group['rho'] < 0:
-                raise ValueError('CondSAM scheduled rho must be finite and nonnegative')
-            for p in group['params']:
-                # Collect validity flags and synchronize once after building directions.
-                d = self._direction(p.grad, self.state[p], group['eps']) if p.grad is not None else torch.zeros_like(p, dtype=torch.float32)
-                check_values.append(d)
-                if p.grad is not None:
-                    entries.append((p, d, group['rho']))
-        self._finite_many(check_values, 'perturbation direction')
-        if not entries:
-            return
-        norm = torch.stack([torch.linalg.vector_norm(d, dtype=torch.float64).square() for _, d, _ in entries]).sum().sqrt()
-        norm_value = norm.item()
-        if norm_value == 0:
-            return
-        by_rho = {}
-        for p, direction, rho in entries:
-            self._original[p] = p.detach().clone()
-            params, directions = by_rho.setdefault(rho, ([], []))
-            params.append(p)
-            directions.append(direction)
-        for rho, (params, directions) in by_rho.items():
-            scale = rho / norm_value
-            bounds = torch.finfo(torch.float32)
-            if scale == 0 or bounds.tiny <= abs(scale) <= bounds.max:
-                # Avoid converting every full gradient to/from FP64. The norm
-                # remains FP64; extreme scaling retains the FP64 path below.
-                delta = torch._foreach_mul(directions, scale)
-                torch._foreach_add_(params, delta)
-            else:
-                for p, direction in zip(params, directions):
-                    p.add_((direction.double() * (rho / norm)).to(p.dtype))
+        The caller controls the forward, loss, backward and parameter selection.
+        Unsupported/functional layers have no factors and retain the SAM direction.
+        """
+        if batch_size <= 0:
+            raise ValueError('batch_size must be positive')
+        is_ddp = isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        self._process_group = model.process_group if is_ddp else None
+        self._distributed = is_ddp and dist.get_world_size(self._process_group) > 1
+        handles, observations = [], {}
+        lock = threading.Lock()
+        layers = self._layers(model)
+        for buffers in self._stats_buffers.values():
+            for value in buffers:
+                value.zero_()
 
-    @torch.no_grad()
-    def move_back(self):
-        if self._original:
-            torch._foreach_copy_(list(self._original), list(self._original.values()))
-        self._original.clear()
+        def hook(p):
+            def forward(module, inputs, output):
+                if not torch.is_tensor(output) or not output.requires_grad:
+                    return
+                activation = inputs[0].detach().clone()
+                key = (p, activation.device)
+                with lock:
+                    if key not in observations:
+                        buffers = self._stats_buffers.get(key)
+                        if buffers is None:
+                            out_dim, in_dim = p.shape[0], p.numel() // p.shape[0]
+                            buffers = (
+                                torch.zeros(in_dim, in_dim, device=activation.device, dtype=torch.float32),
+                                torch.zeros(out_dim, out_dim, device=activation.device, dtype=torch.float32),
+                                torch.zeros((), device=activation.device, dtype=torch.float64),
+                            )
+                            self._stats_buffers[key] = buffers
+                        observations[key] = buffers
 
-    def load_state_dict(self, state_dict):
-        configured_iters = [group['power_iters'] for group in self.param_groups]
-        super().load_state_dict(state_dict)
-        for group, power_iters in zip(self.param_groups, configured_iters):
-            # Older checkpoints have no iteration count; keep the configured one.
-            group.setdefault('power_iters', power_iters)
-            self._validate_power_iters(group['power_iters'])
+                @torch.no_grad()
+                def backward(grad):
+                    self._accumulate(module, activation, grad.detach(), batch_size, observations[key])
+                    return grad
+
+                with lock:
+                    handles.append(output.register_hook(backward))
+            return forward
+
+        try:
+            for p, modules in layers:
+                for module in modules:
+                    handles.append(module.register_forward_hook(hook(p)))
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
+        pooled = {}
+        # Keep the parameter order identical on every DDP worker, even if a
+        # layer was unused locally. DataParallel replica statistics sum here.
+        for p, _ in layers:
+            out_dim, in_dim = p.shape[0], p.numel() // p.shape[0]
+            pooled[p] = (
+                torch.zeros(in_dim, in_dim, device=p.device, dtype=torch.float32),
+                torch.zeros(out_dim, out_dim, device=p.device, dtype=torch.float32),
+                torch.zeros((), device=p.device, dtype=torch.float64),
+            )
+        for (p, _), buffers in observations.items():
+            for total, value in zip(pooled[p], buffers):
+                total.add_(value.to(p.device))
+        self._update_factors(pooled)
+
+    def _directions(self):
+        return {p: self._direction(g, self.state[p], self.options['eps'])
+                for p, g in self._gradients().items()}
+
+    def load_state_dict(self, checkpoint):
+        super().load_state_dict(checkpoint)
+        self._validate_power_iters(self.options['power_iters'])
         self._stats_buffers.clear()
         for state in self.state.values():
             for key in ('A', 'B', 'x', 'y'):
                 if key in state:
                     state[key] = state[key].float()
-
-    def descent_step(self):
-        self.SGD_step()
-
-    def step(self, model, inputs, targets, regression=False):
-        is_ddp = isinstance(model, torch.nn.parallel.DistributedDataParallel)
-        self._process_group = model.process_group if is_ddp else None
-        self._distributed = is_ddp and dist.get_world_size(self._process_group) > 1
-        handles, observations = [], {}
-        bn_states = [(m, m.track_running_stats) for m in model.modules()
-                     if isinstance(m, torch.nn.modules.batchnorm._BatchNorm)]
-
-        def loss_fn(predictions):
-            if regression:
-                return F.mse_loss(predictions.squeeze(-1), targets.float())
-            return smooth_crossentropy(predictions, targets).mean()
-
-        self.zero_grad()
-        try:
-            for p, modules in self._layers(model):
-                out_dim, in_dim = p.shape[0], p.numel() // p.shape[0]
-                buffers = self._stats_buffers.get(p)
-                if buffers is None or buffers[0].device != p.device:
-                    buffers = (torch.zeros(in_dim, in_dim, device=p.device, dtype=torch.float32),
-                               torch.zeros(out_dim, out_dim, device=p.device, dtype=torch.float32),
-                               torch.zeros((), device=p.device, dtype=torch.float64))
-                    self._stats_buffers[p] = buffers
-                else:
-                    for value in buffers:
-                        value.zero_()
-                observations[p] = buffers
-                for module in modules:
-                    handles.append(module.register_forward_hook(
-                        self._hook(p, observations, handles, targets.shape[0])))
-            predictions = model(inputs)
-            loss = loss_fn(predictions)
-            loss.backward()
-            for handle in handles:
-                handle.remove()
-            handles.clear()
-            self._update_factors(observations)
-            observations.clear()
-            self.move_up()
-            self.zero_grad()
-            for module, _ in bn_states:
-                module.track_running_stats = False
-            loss_fn(model(inputs)).backward()
-            self.move_back()
-            if Args.grad_clip_norm != 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), Args.grad_clip_norm)
-            self.descent_step()
-            return loss, predictions
-        finally:
-            self.move_back()
-            for module, tracking in bn_states:
-                module.track_running_stats = tracking
-            for handle in handles:
-                handle.remove()
-            observations.clear()
-            self.zero_grad()

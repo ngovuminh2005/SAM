@@ -1,0 +1,10 @@
+# Perturbation defaults ported from wise-ft optimizer/defaults.ini.
+# Stack on a base config: -C rn18_configs/rn18_16_epochs.yaml -C sam_configs/<this>.yaml
+sam:
+  method: condsam
+  rho: 0.01
+  condsam_beta: 0.95
+  condsam_eps: 1.0e-8
+  condsam_power_iters: 1
+training:
+  precision: bf16
