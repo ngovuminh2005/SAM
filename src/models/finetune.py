@@ -15,12 +15,14 @@ from src.models.utils import cosine_lr, torch_load, LabelSmoothing
 from src.models.training import build_optimizer_and_policy, train_batch
 from src.models.eval_suite import evaluate_all_settings
 from src import tracking
+from src.randomness import seed_everything
 
 import src.datasets as datasets
 
 
 def finetune(args, evaluate_at_end=True):
     with tracking.experiment_run(args):
+        seed_everything(getattr(args, 'seed', 42))
         return _finetune(args, evaluate_at_end)
 
 

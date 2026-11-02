@@ -8,6 +8,7 @@ from src.models.finetune import finetune
 from src.models.interpolation import merge_weights as _merge
 from src.models.modeling import ImageEncoder, ImageClassifier
 from src.models.zeroshot import get_zeroshot_classifier
+from src.randomness import seed_everything
 
 
 def wise_ft(args):
@@ -15,6 +16,7 @@ def wise_ft(args):
         raise ValueError('Please provide --save for checkpoints and evaluation results')
     os.makedirs(args.save, exist_ok=True)
     with tracking.experiment_run(args, job_type='wise-ft'):
+        seed_everything(getattr(args, 'seed', 42))
         if args.load is None:
             image_encoder = ImageEncoder(args, keep_lang=True)
             classification_head = get_zeroshot_classifier(args, image_encoder.model)

@@ -19,6 +19,7 @@ command=(
     --epochs "${EPOCHS:-10}"
     --batch-size "${BATCH_SIZE:-512}"
     --num-workers "${NUM_WORKERS:-8}"
+    --seed "${SEED:-42}"
     --eval-datasets ImageNet,ImageNetV2,ImageNetR,ImageNetA,ImageNetSketch
     --save "${SAVE_DIR}"
     --results-db "${SAVE_DIR}/results.jsonl"

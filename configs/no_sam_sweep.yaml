@@ -10,6 +10,8 @@ command:
   - ${program}
   - ${args}
 parameters:
+  seed:
+    value: 42
   model:
     value: ViT-L/14@336px
   lr:

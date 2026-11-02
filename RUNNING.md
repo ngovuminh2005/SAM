@@ -82,7 +82,14 @@ interactive login. Set `--wandb-mode online` after `wandb login` (or provide
 `wandb/` directory and can later be uploaded with `wandb sync`.
 `--wandb-entity`, `--wandb-group`, `--wandb-dir` and `--log-every` customize logging.
 
-All sweep YAMLs now select OpenAI CLIP `ViT-L/14@336px` at 336-pixel resolution,
+All YAML sweeps declare `seed: {value: 42}`. `--seed` also defaults to 42 for
+direct commands. Python, NumPy and PyTorch/CUDA are seeded before model setup
+and at the start of fine-tuning, covering shuffled data, augmentation and
+CondSAM power-vector initialization. The effective seed is recorded in W&B
+config. This seeds RNG streams without enabling strict deterministic CUDA mode.
+
+The original SAM sweep selects `ViT-B/32` at 224-pixel resolution. Other sweep
+YAMLs select OpenAI CLIP `ViT-L/14@336px` at 336-pixel resolution,
 the paper's default model. The single-run script and CLI example above use
 `ViT-B/32` unless overridden. The loader also accepts official `ViT-L/14`
 (224 pixels) checkpoints. Weights are downloaded on first use and checked against
@@ -140,7 +147,7 @@ SAM_CONFIG=configs/sam.ini SAVE_DIR=models/sam-config bash scripts/run_sam.sh
 
 The example scripts follow the original README's end-to-end AdamW recipe: learning rate
 `3e-5`, weight decay `0.1`, betas `(0.9, 0.999)` and epsilon `1e-8`. The single-run
-script uses ViT-B/32; every sweep YAML selects ViT-L/14@336px. Both use
+script and original SAM sweep use ViT-B/32; other sweep YAMLs select ViT-L/14@336px. All use
 batch size `512`, 10 epochs, and the default 11-alpha/five-dataset final
 suite. `SAVE_DIR`, `RUN_NAME`, `MODEL`, `DATA_ROOT`, `LR`, `WEIGHT_DECAY`,
 `BATCH_SIZE`, `EPOCHS`, `NUM_WORKERS` and `BASE_OPTIMIZER` override shell defaults.

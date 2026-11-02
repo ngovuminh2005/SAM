@@ -34,8 +34,10 @@
    - [configs/condsam_sweep.yaml](configs/condsam_sweep.yaml): các giá trị quét
      `sam-rho`, `condsam-beta`, `condsam-power-iters`; cùng `lr`, `wd`, `epochs`,
      `batch-size`. Giá trị trong sweep ghi đè INI.
+     Tất cả YAML mặc định `seed: 42`.
      Recipe hiện tại: `lr=3e-5`, batch `512`, warmup `500` bước rồi cosine decay.
-     Toàn bộ YAML sweep mặc định dùng `ViT-L/14@336px` (ảnh `336×336`).
+     CondSAM và các biến thể dùng `ViT-L/14@336px` (`336×336`);
+     riêng SAM gốc dùng `ViT-B/32` (`224×224`).
    - [scripts/sweep_condsam.sh](scripts/sweep_condsam.sh) đã trỏ đúng config.
      Optimizer cập nhật trọng số mặc định là AdamW.
 

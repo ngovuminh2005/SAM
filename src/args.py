@@ -115,6 +115,8 @@ def parse_arguments(argv=None):
     parser.add_argument('--friendlysam-lambda', type=float, default=0.95)
     parser.add_argument('--fishersam-eta', type=float, default=1.0)
     parser.add_argument('--num-workers', type=int, default=8)
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Seed for Python, NumPy and PyTorch/CUDA RNG streams.')
     parser.add_argument('--save-interpolated', action='store_true',
                         help='Save each interpolated checkpoint in addition to evaluating it.')
     parser.add_argument('--wandb-mode', choices=['online', 'offline', 'disabled'],
@@ -177,6 +179,8 @@ def parse_arguments(argv=None):
     except ValueError as error:
         parser.error(str(error))
     parsed_args = parser.parse_args(argv)
+    if not 0 <= parsed_args.seed < 2**32:
+        parser.error('--seed must be in [0, 2**32)')
     if parsed_args.log_every < 1 or parsed_args.num_workers < 0:
         parser.error('--log-every must be positive and --num-workers must be nonnegative')
     if parsed_args.epochs < 1:
