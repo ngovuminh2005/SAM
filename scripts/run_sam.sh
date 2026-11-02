@@ -14,10 +14,10 @@ command=(
     --optimizer "${BASE_OPTIMIZER:-adamw}"
     --sam sam
     --sam-config "${SAM_CONFIG:-${PROJECT_ROOT}/optimizer/defaults.ini}"
-    --lr "${LR:-0.001}"
+    --lr "${LR:-0.00003}"
     --wd "${WEIGHT_DECAY:-0.1}"
     --epochs "${EPOCHS:-10}"
-    --batch-size "${BATCH_SIZE:-128}"
+    --batch-size "${BATCH_SIZE:-512}"
     --num-workers "${NUM_WORKERS:-8}"
     --eval-datasets ImageNet,ImageNetV2,ImageNetR,ImageNetA,ImageNetSketch
     --save "${SAVE_DIR}"

@@ -25,7 +25,7 @@ command=(
     "${PYTHON:-python}" -m src.wise_ft
     --load "${reference},${finetuned}"
     --data-location "${DATA_ROOT:-${PROJECT_ROOT}/datasets}"
-    --batch-size "${BATCH_SIZE:-128}"
+    --batch-size "${BATCH_SIZE:-512}"
     --num-workers "${NUM_WORKERS:-8}"
     --eval-datasets ImageNet,ImageNetV2,ImageNetR,ImageNetA,ImageNetSketch
     --save "${SAVE_DIR}"

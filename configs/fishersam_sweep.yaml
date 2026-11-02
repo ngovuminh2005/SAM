@@ -10,8 +10,10 @@ command:
   - ${program}
   - ${args}
 parameters:
+  model:
+    value: ViT-B/32
   lr:
-    value: 0.001
+    value: 0.00003
   wd:
     value: 0.1
   sam-rho:
@@ -27,6 +29,6 @@ parameters:
   epochs:
     value: 10
   batch-size:
-    value: 128
+    value: 512
   wandb-mode:
     value: online

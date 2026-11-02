@@ -82,6 +82,18 @@ interactive login. Set `--wandb-mode online` after `wandb login` (or provide
 `wandb/` directory and can later be uploaded with `wandb sync`.
 `--wandb-entity`, `--wandb-group`, `--wandb-dir` and `--log-every` customize logging.
 
+The current model is OpenAI CLIP `ViT-B/32` at 224-pixel resolution, matching
+the upstream README example. The loader also accepts official `ViT-L/14`
+(224 pixels) and `ViT-L/14@336px` (336 pixels) checkpoints. The latter is the
+paper's default model. Weights are downloaded on first use and checked against
+the SHA256 embedded in OpenAI's model URL; model dimensions and preprocessing
+resolution are inferred from the checkpoint.
+
+For a sweep, edit `parameters.model.value` in its YAML. For a single run, use
+`MODEL='ViT-L/14@336px' bash scripts/run_sam.sh --sam condsam`. Sweep YAML flags
+take precedence over the script's `MODEL` environment variable. Batch 512 is
+the B/32 README recipe; choose a batch fitting your hardware when changing models.
+
 ## Automatic final evaluation
 
 Both `python -m src.wise_ft` and standalone `python -m src.models.finetune`
@@ -126,19 +138,21 @@ SAM with its standalone INI:
 SAM_CONFIG=configs/sam.ini SAVE_DIR=models/sam-config bash scripts/run_sam.sh
 ```
 
-The example scripts use the original code's AdamW defaults: learning rate
-`0.001`, weight decay `0.1`, betas `(0.9, 0.999)` and epsilon `1e-8`. They use ViT-B/32,
-batch size `128`, 10 epochs, and the default 11-alpha/five-dataset final
+The example scripts follow the original README's end-to-end AdamW recipe: learning rate
+`3e-5`, weight decay `0.1`, betas `(0.9, 0.999)` and epsilon `1e-8`. They use ViT-B/32,
+batch size `512`, 10 epochs, and the default 11-alpha/five-dataset final
 suite. `SAVE_DIR`, `RUN_NAME`, `MODEL`, `DATA_ROOT`, `LR`, `WEIGHT_DECAY`,
 `BATCH_SIZE`, `EPOCHS`, `NUM_WORKERS` and `BASE_OPTIMIZER` override shell defaults.
 Extra CLI flags are appended last, so they override corresponding arguments.
 Use `SAVE_DIR` to keep checkpoint and JSONL output in the same directory.
 Without `SAVE_DIR`, a timestamp/PID-based directory prevents run collisions.
 
-W&B grid sweep (`configs/sam_sweep.yaml`): 3 SAM radii (0.005, 0.01, 0.05)
-= 3 training runs. AdamW and the optimizer settings above remain fixed.
-These are the original argument defaults; the original README's `3e-5`
-fine-tuning recipe remains available through an explicit override.
+W&B grid sweep (`configs/sam_sweep.yaml`): the current 4 SAM radii
+`[0.05, 0.01, 0.02, 0.005]` give 4 training runs. AdamW and the optimizer settings above remain fixed.
+Learning rate and batch size now follow the fine-tuning recipe rather than the
+upstream parser defaults (`0.001` and `128`). The learning rate scheduler is
+unchanged from upstream: 500 linear warm-up steps followed by cosine decay,
+updated once per optimizer step, including when SAM uses two backward passes.
 Each run automatically evaluates OOD and its alpha sweep.
 The sweep objective is `epoch_eval/ImageNet/top1` (in-distribution accuracy).
 Sweep jobs use online mode and need W&B login/API credentials.
@@ -165,9 +179,9 @@ and evaluation remain fixed:
 
 | Config | Perturbation | Grid |
 | --- | --- | --- |
-| `configs/sam_sweep.yaml` | SAM | 3 radii, fixed AdamW |
+| `configs/sam_sweep.yaml` | SAM | 4 radii, fixed AdamW |
 | `configs/asam_sweep.yaml` | ASAM | 3 radii, fixed AdamW |
-| `configs/condsam_sweep.yaml` | CondSAM | 3 radii × 3 beta × 3 power iteration counts = 27 |
+| `configs/condsam_sweep.yaml` | CondSAM | 4 radii × beta 0.99 × 5 power iterations = 4 |
 | `configs/friendlysam_sweep.yaml` | FriendlySAM | 3 radii × 3 sigma × 2 lambda = 18 |
 | `configs/fishersam_sweep.yaml` | FisherSAM | 3 radii × 3 eta = 9 |
 | `configs/mongesam_sweep.yaml` | MongeSAM | 3 radii, fixed AdamW |
@@ -188,15 +202,17 @@ ASAM, CondSAM, FriendlySAM, FisherSAM and MongeSAM read their method-specific
 defaults from `optimizer/defaults.ini`. The sampled `--sam-rho` overrides the
 corresponding INI radius for each run. Removed methods have no sweep configs.
 
-Method-specific grids are CondSAM `beta=[0.9, 0.95, 0.99]`,
-`power_iters=[1, 2, 4]`; FriendlySAM `sigma=[0.5, 1.0, 2.0]`,
+The current CondSAM grid is `rho=[0.05, 0.5, 1.5, 1]`, `beta=[0.99]`,
+`power_iters=[5]`; FriendlySAM uses `sigma=[0.5, 1.0, 2.0]`,
 `lmbda=[0.9, 0.95]`; FisherSAM `eta=[0.1, 1.0, 10.0]`.
 CondSAM's numerical `eps=1e-8` stays at its INI default.
 
 W&B run names include effective values after CLI/INI resolution, for example
-`sam-adamw-rho0p5-lr0p001-wd0p1-bs128-ep10`. Decimal points become `p`,
-including values originally written in scientific notation. CondSAM,
-FriendlySAM and FisherSAM also include their condition parameters. A user
+`sam-adamw-rho0p5-lr0p00003`. Epoch count, weight decay and batch size are omitted
+from names but remain in W&B config. Decimal points become `p`,
+including values originally written in scientific notation. CondSAM names
+contain the three method settings `rho`, `beta`, `poweriters`; numerical `eps`
+remains in config. FriendlySAM and FisherSAM also include their method settings. A user
 `--exp_name`/script `RUN_NAME` is appended as a suffix, preserving the script's
 timestamp/PID for uniqueness.
 

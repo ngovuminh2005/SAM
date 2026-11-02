@@ -122,6 +122,33 @@ class EvaluationTests(unittest.TestCase):
             suite.assert_called_once_with(classifier, args, reference_checkpoint='initial.pt')
             self.assertEqual(args.load, ['initial.pt', 'final.pt'])
 
+    def test_sam_scheduler_runs_once_per_optimizer_update(self):
+        from src.models.finetune import finetune
+        from src.models.utils import cosine_lr
+        calls = []
+
+        def scheduler_factory(optimizer, base_lr, warmup, total):
+            self.assertEqual(total, 2)
+            scheduler = cosine_lr(optimizer, base_lr, warmup, total)
+
+            def step(index):
+                calls.append(index)
+                scheduler(index)
+            return step
+
+        with tempfile.TemporaryDirectory() as directory:
+            reference = str(Path(directory) / 'initial.pt')
+            TinyClassifier().save(reference)
+            args = self.args(str(Path(directory) / 'run'), load=reference,
+                             train_dataset='ImageNet', sam='sam', epochs=2, warmup_length=0)
+            with patch.multiple('src.datasets', **fake_datasets()), \
+                    patch('src.models.finetune.cosine_lr', side_effect=scheduler_factory), \
+                    patch('src.models.finetune.evaluate_all_settings') as suite, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                finetune(args, evaluate_at_end=False)
+            suite.assert_not_called()
+        self.assertEqual(calls, [0, 1])
+
     def test_interpolation_and_fisher_endpoints(self):
         zero = dict(weight=torch.tensor([1., 2.]), count=torch.tensor(3))
         final = dict(weight=torch.tensor([3., 4.]), count=torch.tensor(7))
@@ -163,9 +190,11 @@ class TrackingTests(unittest.TestCase):
                                 '--condsam-beta', '0.9', '--condsam-power-iters', '4',
                                 '--exp_name', 'trial'])
         name = tracking.parameter_run_name(args)
-        for part in ['condsam-adamw-rho0p5', 'lr0p00001', 'wd0p1', 'beta0p9',
-                     'eps0p00000001', 'poweriters4']:
+        for part in ['condsam-adamw-rho0p5', 'lr0p00001', 'beta0p9',
+                     'poweriters4']:
             self.assertIn(part, name)
+        for removed in ['wd0p1', 'bs512', 'ep10', 'eps0p00000001']:
+            self.assertNotIn(removed, name)
         self.assertTrue(name.endswith('-trial'))
         friendly = tracking.parameter_run_name(parse_arguments(['--sam', 'friendlysam']))
         self.assertIn('lambda0p9', friendly)

@@ -21,12 +21,9 @@ def parameter_run_name(args):
     parts = [method, optimizer]
     if method != 'none':
         parts.append('rho' + number(getattr(args, 'sam_rho', 0.05)))
-    for label, key, default in [('lr', 'lr', 0.001), ('wd', 'wd', 0.1),
-                                ('bs', 'batch_size', 128), ('ep', 'epochs', 10)]:
-        parts.append(label + number(getattr(args, key, default)))
+    parts.append('lr' + number(getattr(args, 'lr', 0.00003)))
     extras = {
-        'condsam': [('beta', 'condsam_beta', 0.95), ('eps', 'condsam_eps', 1e-8),
-                    ('poweriters', 'condsam_power_iters', 1)],
+        'condsam': [('beta', 'condsam_beta', 0.95), ('poweriters', 'condsam_power_iters', 1)],
         'friendlysam': [('sigma', 'friendlysam_sigma', 1.0), ('lambda', 'friendlysam_lambda', 0.95)],
         'fishersam': [('eta', 'fishersam_eta', 1.0)],
     }

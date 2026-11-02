@@ -71,12 +71,12 @@ def parse_arguments(argv=None):
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=128,
+        default=512,
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=0.001,
+        default=0.00003,
         help="Learning rate."
     )
     parser.add_argument(
