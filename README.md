@@ -13,7 +13,7 @@ All commands run from the repo root.
 conda create -y -p ./env python=3.10
 conda activate ./env
 pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
-# DeepSpeed needs nvcc/CUDA_HOME at import and libcurand to build its CPU Adam
+# CUDA toolkit inside the env (DeepSpeed needs it)
 conda install -y -p ./env -c nvidia/label/cuda-12.4.1 cuda-nvcc cuda-cudart-dev libcurand-dev
 mkdir -p ./env/etc/conda/activate.d && echo 'export CUDA_HOME="$CONDA_PREFIX"' > ./env/etc/conda/activate.d/cuda_home.sh
 conda deactivate && conda activate ./env
@@ -22,8 +22,7 @@ pip install flash-attn==2.7.4.post1 --no-build-isolation  # prebuilt wheel
 wandb login                                              # or export WANDB_API_KEY; or --wandb_mode offline
 ```
 
-Requires NVIDIA GPUs with a driver for CUDA 12.4 (>= 550). Do not upgrade `transformers` past 4.47.x: the code uses
-`Trainer(tokenizer=...)` and `cache_position` handling that newer releases changed.
+Requires an NVIDIA driver for CUDA 12.4 (>= 550). Keep `transformers` at 4.47.x.
 
 ## Models and data
 
@@ -43,15 +42,9 @@ wget -c https://downloads.cs.stanford.edu/nlp/data/gqa/images.zip -P $D/gqa && u
 wget -c https://dl.fbaipublicfiles.com/textvqa/images/train_val_images.zip -P $D/textvqa && unzip -q $D/textvqa/train_val_images.zip -d $D/textvqa
 wget -c https://cs.stanford.edu/people/rak248/VG_100K_2/images.zip  -P $D/vg && unzip -q $D/vg/images.zip  -d $D/vg
 wget -c https://cs.stanford.edu/people/rak248/VG_100K_2/images2.zip -P $D/vg && unzip -q $D/vg/images2.zip -d $D/vg
-# OCR-VQA: no archive; the 80K images LLaVA uses are fetched from their Amazon URLs and saved as .jpg (rerun to resume)
+# OCR-VQA (80K images, rerun to resume)
 gdown --folder https://drive.google.com/drive/folders/1_GYPY5UkUy7HIcR0zq3ZCFgeZN7BAfm_ -O $D/ocr_vqa
 python scripts/download_ocrvqa.py --dataset $D/ocr_vqa/dataset.json --llava $D/llava_v1_5_mix665k.json --out $D/ocr_vqa/images
-```
-
-Training stops at the first missing image, so check that every image the json references exists:
-
-```bash
-python -c "import json,os; d=json.load(open('$D/llava_v1_5_mix665k.json')); m=[x['image'] for x in d if 'image' in x and not os.path.exists('$D/'+x['image'])]; print(len(m), 'missing', m[:3])"
 ```
 
 <details><summary>Evaluation data</summary>
@@ -98,18 +91,15 @@ CONDSAM_POWER_ITERS=(1)
 SEEDS=(42)
 ```
 
-Every combination runs in turn, methods innermost; `no_sam` runs once per VFM type and seed. The global batch is 128
-(the paper's recipe) and `--gradient_accumulation_steps` is derived from `PER_DEVICE_BATCH` (4) and the GPU count.
-Several GPUs use ZeRO-3 ([scripts/zero3.json](scripts/zero3.json)); one GPU also offloads the optimizer state to CPU RAM
-([scripts/zero3_offload_optimizer.json](scripts/zero3_offload_optimizer.json)), since a 7B full fine-tune needs ~110 GB.
+Every combination runs in turn; `no_sam` runs once per VFM type and seed. The global batch stays 128 (paper recipe).
+Two GPUs use ZeRO-3; one GPU also offloads the optimizer to CPU RAM.
 
 ```bash
 DRY_RUN=1 bash scripts/v1_5/train_sweep.sh     # print the commands
 bash scripts/v1_5/train_sweep.sh               # run
 ```
 
-Arguments after the script name go to every run, e.g. `bash scripts/v1_5/train_sweep.sh --wandb_mode offline`. A single
-run without the launcher:
+Extra arguments go to every run, e.g. `--wandb_mode offline`. A single run:
 
 ```bash
 deepspeed --include localhost:0,1 llava/train/train_mem.py \
@@ -118,65 +108,31 @@ deepspeed --include localhost:0,1 llava/train/train_mem.py \
     --output_dir checkpoints/llava-covft-sam --sam_rho 0.05 --seed 42
 ```
 
-The original scripts in `scripts/v1_5/` (`covft_exp4_last12L_layernorm.sh`, `finetune_*_vfm.sh`) still work for 2 GPUs.
-Fixes to the released baselines (`fullft`, `lora`, `bias`, `vpt`), which crashed before the first step:
-- they use `--version v1_w_context`: the model always needs the question context, and `v1` raised
-  `KeyError: 'conversations_context'` in the dataset; prompts and labels are identical to `v1`;
-- `encode_images` passes the context only to the CoVFT tower (the others take images only);
-- DeepSpeed's ZeRO-3 linear backward is patched for BitFit (a trainable bias on a frozen weight raised
-  `UnboundLocalError`, still in DeepSpeed 0.16.9).
-
-Check the data pipeline on real samples (missing images, tokenization mismatches, contexts, batches) before a long run:
-
-```bash
-python scripts/check_data.py --samples 500
-```
-
 ### Configs
 
 | File | Holds |
 |---|---|
-| [configs/base.yaml](configs/base.yaml) | LLaVA-1.5 Stage 2 recipe shared by every run (lr 2e-5, 1 epoch, cosine, bf16, ...) |
-| [configs/vfm/*.yaml](configs/vfm) | vision-encoder tuning type (`covft` = CoMoE from layer 11, 4 dense experts) |
-| [configs/sam/*.yaml](configs/sam) | perturbation policy |
-| [llava/optimizer/defaults.ini](llava/optimizer/defaults.ini) | one radius per policy (0.01) and policy options; `--sam_config` selects another INI |
+| [configs/base.yaml](configs/base.yaml) | LLaVA-1.5 Stage 2 recipe (lr 2e-5, 1 epoch, bf16, ...) |
+| [configs/vfm/*.yaml](configs/vfm) | vision-encoder tuning type |
+| [configs/sam/*.yaml](configs/sam) | SAM method |
+| [llava/optimizer/defaults.ini](llava/optimizer/defaults.ini) | default rho (0.01) and method options |
 
-Precedence: command-line flags, then `--config` files (later files win), then the INI, then code defaults. YAML/JSON keys are
-argument names; a section is an optional prefix (`sam: {rho: 0.05}` sets `--sam_rho`). Unknown keys are errors. Each run
-writes the resolved arguments to `<output_dir>/params.json`.
+Precedence: command line > `--config` files (later wins) > INI. Each run saves its arguments to `<output_dir>/params.json`.
 
 ### SAM
 
-Each micro-batch takes two passes. The first computes the gradient of the parameters matching `--sam_include` (default
-`vision_tower`: CoMoE experts, gates, context cross-attention and LayerNorms for CoVFT) with `torch.autograd.grad`, so
-DeepSpeed's accumulated gradients are untouched; the policy turns it into a perturbation. The second pass is the usual
-training step at the perturbed weights, so every trainable parameter (LLM and projector included) descends with the
-gradient taken there; then the exact weights are restored. Perturbing the 7B LLM as well (`--sam_include ''`) does not fit
-in 80 GB. A step costs about twice a `no_sam` step.
+Each step takes two passes: the gradient of the parameters matching `--sam_include` (default `vision_tower`) gives the
+perturbation, then the usual step runs at the perturbed weights and the weights are restored. A step costs about twice
+a `no_sam` step. With ZeRO-3 every GPU uses the same (all-reduced) perturbation; `--sam_local_perturbation True` (one per
+GPU, as in the SAM paper) needs ZeRO-2.
 
-Under ZeRO-3 the perturbation is applied through `deepspeed.zero.GatheredParameters`, and every rank uses the all-reduced
-first-pass gradient (`m` = global batch); CondSAM then pools its Kronecker factors over ranks.
-`--sam_local_perturbation True` gives each rank its own perturbation (SAM paper m-sharpness) and requires ZeRO-2
-(`--deepspeed scripts/zero2.json`).
-
-### Multi-GPU
-
-> **Note:** all five VFM types with and without SAM (and every policy) have been run on one H100 only (ZeRO-3, ZeRO-3
-> with CPU offload, ZeRO-2; tiny LLM with the real CLIP and BERT). Multi-GPU runs, speed and accuracy are unverified.
-> SAM runs leave the vision tower out of gradient checkpointing (ZeRO-3 frees frozen CLIP weights before the
-> non-reentrant recomputation); CoVFT's tower is never checkpointed anyway.
-
-```bash
-python -m unittest tests.test_config tests.test_sam_trainer   # configs; SAM step vs. a hand-written reference (GPU)
-```
+> **Note:** tested on one H100 only; multi-GPU runs are unverified.
 
 ### Outputs
 
-Each run writes `checkpoints/sweeps/<group>/llava-<vfm>-<method>-...-seed<seed>/` with the model, `params.json` and the W&B
-files. W&B runs of one sweep share a group (`WANDB_PROJECT=covft`) and are named after what varies
-(`context_moe_layernorm-sam-rho0.05-lr2e-05-seed42`); besides HF's `train/*`, SAM runs log `sam/clean_loss` (loss at the
-unperturbed weights), `sam/grad_norm` and `sam/delta_norm`. HF reports `train/loss` summed over the accumulated
-micro-batches with DeepSpeed; gradients are averaged correctly.
+Each run writes `checkpoints/sweeps/<group>/llava-<vfm>-<method>-...-seed<seed>/` (model, `params.json`, W&B files).
+Runs of one sweep share a W&B group in project `covft`; SAM runs also log `sam/clean_loss`, `sam/grad_norm`,
+`sam/delta_norm`.
 
 ## Evaluation
 
@@ -186,8 +142,7 @@ for s in sqa gqa textvqa mmbench mmbench_cn mme; do bash scripts/v1_5/eval/$s.sh
 for b in mmvp realworldqa ai2d omni ade coco; do bash scripts/v1_5/eval/run_benckmark_cambrain.sh --ckpt $CKPT_DIR --benchmark $b; done
 ```
 
-MMBench writes files for submission to OpenCompass instead of a score. `run_eval.sh` runs everything for one checkpoint;
-its MMMU step fails because the repo has no `mmmu/` folder.
+MMBench writes a file to submit to OpenCompass instead of a score.
 
 ## Citation
 
