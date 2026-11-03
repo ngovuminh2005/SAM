@@ -1,4 +1,4 @@
 # Full fine-tuning of the vision encoder, from scripts/v1_5/finetune_fullft_vfm.sh
 model:
-  version: v1
+  version: v1_w_context   # same prompt and labels as v1, plus the question context the model requires
   vfm_tuning_type: fullft

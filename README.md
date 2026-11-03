@@ -43,10 +43,16 @@ wget -c https://downloads.cs.stanford.edu/nlp/data/gqa/images.zip -P $D/gqa && u
 wget -c https://dl.fbaipublicfiles.com/textvqa/images/train_val_images.zip -P $D/textvqa && unzip -q $D/textvqa/train_val_images.zip -d $D/textvqa
 wget -c https://cs.stanford.edu/people/rak248/VG_100K_2/images.zip  -P $D/vg && unzip -q $D/vg/images.zip  -d $D/vg
 wget -c https://cs.stanford.edu/people/rak248/VG_100K_2/images2.zip -P $D/vg && unzip -q $D/vg/images2.zip -d $D/vg
+# OCR-VQA: no archive; the 80K images LLaVA uses are fetched from their Amazon URLs and saved as .jpg (rerun to resume)
+gdown --folder https://drive.google.com/drive/folders/1_GYPY5UkUy7HIcR0zq3ZCFgeZN7BAfm_ -O $D/ocr_vqa
+python scripts/download_ocrvqa.py --dataset $D/ocr_vqa/dataset.json --llava $D/llava_v1_5_mix665k.json --out $D/ocr_vqa/images
 ```
 
-OCR-VQA has no archive: get `dataset.json` and `loadDataset.py` from [ocr-vqa.github.io](https://ocr-vqa.github.io/) and
-save the images as `.jpg` in `$D/ocr_vqa/images/`.
+Training stops at the first missing image, so check that every image the json references exists:
+
+```bash
+python -c "import json,os; d=json.load(open('$D/llava_v1_5_mix665k.json')); m=[x['image'] for x in d if 'image' in x and not os.path.exists('$D/'+x['image'])]; print(len(m), 'missing', m[:3])"
+```
 
 <details><summary>Evaluation data</summary>
 
@@ -75,8 +81,8 @@ MME images are available on request from the [authors](https://github.com/BradyF
 Edit the settings at the top of [scripts/v1_5/train_sweep.sh](scripts/v1_5/train_sweep.sh):
 
 ```bash
-GPUS_PER_NODE=1              # processes on this node; > 1 runs data parallel (DeepSpeed)
-GPU_IDS=(0)                  # which GPUs, one id per process
+GPUS_PER_NODE=2              # processes on this node; > 1 runs data parallel (DeepSpeed)
+GPU_IDS=(0 1)                # which GPUs, one id per process
 
 VFM_TYPES=(covft)            # covft fullft lora bias vpt
 METHODS=(no_sam sam)         # no_sam sam asam condsam friendlysam fishersam mongesam
@@ -113,6 +119,18 @@ deepspeed --include localhost:0,1 llava/train/train_mem.py \
 ```
 
 The original scripts in `scripts/v1_5/` (`covft_exp4_last12L_layernorm.sh`, `finetune_*_vfm.sh`) still work for 2 GPUs.
+Fixes to the released baselines (`fullft`, `lora`, `bias`, `vpt`), which crashed before the first step:
+- they use `--version v1_w_context`: the model always needs the question context, and `v1` raised
+  `KeyError: 'conversations_context'` in the dataset; prompts and labels are identical to `v1`;
+- `encode_images` passes the context only to the CoVFT tower (the others take images only);
+- DeepSpeed's ZeRO-3 linear backward is patched for BitFit (a trainable bias on a frozen weight raised
+  `UnboundLocalError`, still in DeepSpeed 0.16.9).
+
+Check the data pipeline on real samples (missing images, tokenization mismatches, contexts, batches) before a long run:
+
+```bash
+python scripts/check_data.py --samples 500
+```
 
 ### Configs
 
@@ -143,8 +161,10 @@ first-pass gradient (`m` = global batch); CondSAM then pools its Kronecker facto
 
 ### Multi-GPU
 
-> **Note:** SAM has been checked on one H100 only (ZeRO-3, ZeRO-3 with CPU offload, ZeRO-2; tiny LLM with the real CLIP
-> and BERT). Multi-GPU runs, speed and accuracy are unverified.
+> **Note:** all five VFM types with and without SAM (and every policy) have been run on one H100 only (ZeRO-3, ZeRO-3
+> with CPU offload, ZeRO-2; tiny LLM with the real CLIP and BERT). Multi-GPU runs, speed and accuracy are unverified.
+> SAM runs leave the vision tower out of gradient checkpointing (ZeRO-3 frees frozen CLIP weights before the
+> non-reentrant recomputation); CoVFT's tower is never checkpointed anyway.
 
 ```bash
 python -m unittest tests.test_config tests.test_sam_trainer   # configs; SAM step vs. a hand-written reference (GPU)

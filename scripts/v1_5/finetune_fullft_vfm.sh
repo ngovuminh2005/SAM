@@ -12,7 +12,7 @@ CUDA_VISIBLE_DEVICES=0,1 deepspeed --master_port 29671 --num_gpus 2 llava/train/
     --vfm_tuning_type fullft \
     --deepspeed ./scripts/zero3.json \
     --model_name_or_path lmsys/vicuna-7b-v1.5 \
-    --version v1 \
+    --version v1_w_context \
     --data_path ./data/llava_finetune/llava_v1_5_mix665k.json \
     --image_folder ./data/llava_finetune \
     --vision_tower openai/clip-vit-large-patch14-336 \

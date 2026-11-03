@@ -10,8 +10,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 # =============================== GPUS =================================
-GPUS_PER_NODE=1              # processes on this node; > 1 runs data parallel (DeepSpeed)
-GPU_IDS=(0)                  # which GPUs, one id per process
+GPUS_PER_NODE=2              # processes on this node; > 1 runs data parallel (DeepSpeed)
+GPU_IDS=(0 1)                # which GPUs, one id per process
 # ======================================================================
 
 # ============================== SWEEP =================================

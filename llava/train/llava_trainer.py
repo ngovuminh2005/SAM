@@ -135,6 +135,28 @@ class LengthGroupedSampler(Sampler):
         return iter(indices)
 
 
+def patch_zero3_linear_bias_only():
+    """Fix DeepSpeed's ZeRO-3 linear backward for a trainable bias on a frozen weight.
+
+    It sets `dim` only when the weight needs a gradient, so BitFit (`bias`)
+    raised UnboundLocalError (still the case in DeepSpeed 0.16.9).
+    """
+    from deepspeed.runtime.zero.linear import LinearFunctionForZeroStage3
+    original = LinearFunctionForZeroStage3.backward
+    if getattr(original, 'bias_only_fix', False):
+        return
+
+    def backward(ctx, grad_output):
+        if ctx.needs_input_grad[1] or not ctx.needs_input_grad[2]:
+            return original(ctx, grad_output)
+        input, weight, bias = ctx.saved_tensors
+        grad_input = grad_output.matmul(weight) if ctx.needs_input_grad[0] else None
+        return grad_input, None, grad_output.reshape(-1, grad_output.shape[-1]).sum(0)
+
+    backward.bias_only_fix = True
+    LinearFunctionForZeroStage3.backward = staticmethod(backward)
+
+
 def release_zero3_parameters(model):
     """Release every gathered ZeRO-3 parameter so GatheredParameters can repartition.
 
@@ -153,6 +175,30 @@ class LLaVATrainer(Trainer):
         super().__init__(*args, **kwargs)
         self.sam_policy = None
         self.sam_stats = {'clean_loss': [], 'grad_norm': [], 'delta_norm': []}
+        patch_zero3_linear_bias_only()
+        if self.args.sam_method != 'none':
+            self.keep_vision_tower_unchecked()
+
+    def keep_vision_tower_unchecked(self):
+        """Leave the vision tower out of gradient checkpointing for SAM runs.
+
+        SAM needs non-reentrant checkpointing, and its recomputation inside CLIP's
+        encoder sees frozen ZeRO-3 weights already released (shape 0). CoVFT's tower
+        calls its layers directly and is never checkpointed either.
+        """
+        enable = getattr(self.model, 'gradient_checkpointing_enable', None)
+        if enable is None:
+            return
+
+        def gradient_checkpointing_enable(*args, **kwargs):
+            enable(*args, **kwargs)
+            get_model = getattr(self.model, 'get_model', None)
+            vision_tower = get_model().get_vision_tower() if get_model else None
+            for module in vision_tower.modules() if vision_tower is not None else []:
+                if hasattr(module, 'gradient_checkpointing'):
+                    module.gradient_checkpointing = False
+
+        self.model.gradient_checkpointing_enable = gradient_checkpointing_enable
 
     def create_sam_policy(self):
         args = self.args

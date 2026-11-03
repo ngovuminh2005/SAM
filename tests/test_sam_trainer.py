@@ -94,6 +94,19 @@ class SAMTrainerTest(unittest.TestCase):
                 self.assertTrue(torch.equal(value, original))
             self.assertTrue(all(torch.isfinite(p.grad).all() for p in trainer.model.parameters()))
 
+    def test_zero3_linear_bias_only_patch(self):
+        from deepspeed.runtime.zero.linear import LinearFunctionForZeroStage3
+        from llava.train.llava_trainer import patch_zero3_linear_bias_only
+        patch_zero3_linear_bias_only()
+        torch.manual_seed(0)
+        x = torch.randn(2, 3, 4, requires_grad=True)
+        weight, bias = torch.randn(5, 4), torch.randn(5, requires_grad=True)
+        LinearFunctionForZeroStage3.apply(x, weight, bias).square().sum().backward()
+        x_ref, bias_ref = x.detach().clone().requires_grad_(), bias.detach().clone().requires_grad_()
+        torch.nn.functional.linear(x_ref, weight, bias_ref).square().sum().backward()
+        torch.testing.assert_close(bias.grad, bias_ref.grad)
+        torch.testing.assert_close(x.grad, x_ref.grad)
+
     def test_no_sam_and_empty_selection(self):
         with tempfile.TemporaryDirectory() as tmp:
             trainer = self.make_trainer('none', tmp)

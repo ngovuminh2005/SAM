@@ -1,6 +1,6 @@
 # LoRA on the vision encoder, from scripts/v1_5/finetune_lora_vfm.sh
 model:
-  version: v1
+  version: v1_w_context   # same prompt and labels as v1, plus the question context the model requires
   vfm_tuning_type: lora
   vfm_lora_rank: 8
   vfm_lora_alpha: 16

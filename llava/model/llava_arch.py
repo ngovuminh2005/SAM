@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 
 from .multimodal_encoder.builder import build_vision_tower, build_context_embedding_model
+from .multimodal_encoder.clip_encoder import CLIPVisionTowerContextMoe
 from .multimodal_projector.builder import build_vision_projector
 
 from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
@@ -167,7 +168,12 @@ class LlavaMetaForCausalLM(ABC):
 
         global count_for_visualize
         regularization_loss = None
-        image_features, all_gate_probs = self.get_model().get_vision_tower()(images, context_embeddings)
+        vision_tower = self.get_model().get_vision_tower()
+        if isinstance(vision_tower, CLIPVisionTowerContextMoe):
+            image_features, all_gate_probs = vision_tower(images, context_embeddings)
+        else:
+            # Baseline towers (fullft, lora, bias, vpt) ignore the context.
+            image_features = vision_tower(images)
         # if self.training:
         #     with torch.no_grad():
         #         anchor_image_features = self.get_model().get_anchor_vision_tower()(images)
