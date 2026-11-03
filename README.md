@@ -14,7 +14,8 @@ python -m pip install -r requirements.txt     # torch 2.4.1 (CUDA 12.1), ffcv 1.
 wandb login                                   # or export WANDB_API_KEY
 ```
 
-Requires NVIDIA GPUs. The environment must live at `./env`: the launcher runs `env/bin/python`.
+Requires NVIDIA GPUs with a driver that supports CUDA 12.1 (>= 525). The launcher uses `./env/bin/python` if it
+exists, otherwise `python` from the active environment.
 
 - `ffcv` is compiled against OpenCV 4 and libjpeg-turbo from conda; its build does not find OpenCV 5.
 - `libpng<1.6.45`: torchvision 0.19 bundles an older libpng, and newer OpenCV builds then fail with
@@ -52,19 +53,20 @@ Arguments are `<max side length> <JPEG fraction> <JPEG quality>`. Images are res
 each, about 10x a JPEG). This is the original ffcv-imagenet ResNet-50 setting and writes
 `data/{train,val}_500_0.50_90.ffcv`.
 
-| Setting | Train file | `IN_MEMORY` | Notes |
-|---|---|---|---|
-| `500 0.50 90` | ~360–390 GB (estimated) | `0` (larger than RAM) | default; half the images are not re-compressed |
-| `500 1.0 90` | 68.5 GB (measured) | `1` | optional; every image re-compressed as JPEG, fits in RAM, ~7 min to write on 20 CPUs |
+| Setting | Train file | Notes |
+|---|---|---|
+| `500 0.50 90` | ~360–390 GB (estimated) | default; half the images are not re-compressed |
+| `500 1.0 90` | 68.5 GB (measured) | optional; every image re-compressed as JPEG; ~7 min to write on 20 CPUs |
 
-The launcher defaults to `DATA_TAG=500_0.50_90` and `IN_MEMORY=0`. To use `1.0`, write it with
-`./write_imagenet.sh 500 1.0 90` and set `DATA_TAG=500_1.0_90` and `IN_MEMORY=1` in
-[scripts/train_rn50.sh](scripts/train_rn50.sh). Use `IN_MEMORY=1` only when the train file fits in RAM.
+The launcher defaults to `DATA_TAG=500_0.50_90`. To use `1.0`, write it with `./write_imagenet.sh 500 1.0 90` and
+set `DATA_TAG=500_1.0_90` in [scripts/train_rn50.sh](scripts/train_rn50.sh). With `IN_MEMORY=auto` (default) the
+train file is cached in RAM when it fits in 80% of the machine's memory and read from disk otherwise; set `0` or `1`
+to force either.
 
 Converting needs the raw `imagenet/` folder (~146 GiB) and the output on disk at the same time: about 520 GB free
 for `0.50`. The raw folder is not used for training and can be deleted afterwards. With 18 loader workers and the data
 in RAM, `1.0` and `0.50` load equally fast (~10.5k img/s for the ResNet-18 pipeline on 20 CPUs); reading `0.50` from
-disk with `IN_MEMORY=0` has not been benchmarked.
+disk has not been benchmarked.
 
 ## Configure and run
 
@@ -91,7 +93,8 @@ SEEDS=(42)
 Every combination runs in turn; the example runs 10 jobs (`sam` and `condsam`, each with five rho values; CondSAM with
 beta 0.99 and 5 power iterations). `GPU_IDS` must list
 `GPUS_PER_NODE` ids (DDP is single-node). Fixed settings (per-GPU batch 512, data paths,
-`WANDB_PROJECT=ffcv-imagenet`) are in the `FIXED` block below. The learning rate follows the original 8-GPU recipe
+`WANDB_PROJECT=ffcv-imagenet`) are in the `FIXED` block below; loader workers default to all CPUs but two,
+split across the GPUs (`NUM_WORKERS=auto`). The learning rate follows the original 8-GPU recipe
 (1.7 at a global batch of 4096) scaled linearly with the global batch: 0.2125 on one GPU.
 
 ```bash

@@ -33,11 +33,11 @@ SEEDS=(42)
 BATCH_SIZE=512               # per GPU
 # rn50_configs use lr 1.7 for 8 GPUs x 512 = 4096; scale linearly with the global batch.
 LR=$(awk -v b="${BATCH_SIZE}" -v n="${GPUS_PER_NODE}" 'BEGIN { print 1.7 * b * n / 4096 }')
-# Loader workers per GPU process; 18 in total saturated this 20-CPU machine.
-NUM_WORKERS=$(( 18 / GPUS_PER_NODE > 0 ? 18 / GPUS_PER_NODE : 1 ))
+# Loader workers per GPU process: all CPUs but two, split across the GPUs.
+NUM_WORKERS=auto
 DATA_DIR="${PROJECT_ROOT}/data"
 DATA_TAG=500_0.50_90         # <max side>_<JPEG fraction>_<quality>; optional: 500_1.0_90
-IN_MEMORY=0                  # 1 only if the train file fits in RAM (e.g. 500_1.0_90)
+IN_MEMORY=auto               # 1 caches the train file in RAM; auto = 1 if it fits in 80% of RAM
 LOG_DIR="${PROJECT_ROOT}/logs"
 WANDB_PROJECT=ffcv-imagenet
 WANDB_GROUP="rn50-$(date +%Y%m%d-%H%M%S)"     # all runs of this sweep share a group
@@ -45,16 +45,38 @@ WANDB_GROUP="rn50-$(date +%Y%m%d-%H%M%S)"     # all runs of this sweep share a g
 
 (( ${#GPU_IDS[@]} == GPUS_PER_NODE )) || {
     echo "GPU_IDS lists ${#GPU_IDS[@]} GPU(s) but GPUS_PER_NODE=${GPUS_PER_NODE}" >&2; exit 2; }
+num_gpus=$(nvidia-smi -L 2>/dev/null | wc -l)
+for id in "${GPU_IDS[@]}"; do
+    [[ "${id}" =~ ^[0-9]+$ ]] && (( id < num_gpus )) || {
+        echo "GPU id ${id} not found (nvidia-smi lists ${num_gpus} GPU(s))" >&2; exit 2; }
+done
 # DDP ranks 0..N-1 map onto these ids in order (train_imagenet.py is single-node).
 export CUDA_VISIBLE_DEVICES="$(IFS=,; echo "${GPU_IDS[*]}")"
 DISTRIBUTED=$(( GPUS_PER_NODE > 1 ? 1 : 0 ))
-# Same as what `conda activate ./env` sets; keeps ~/.local packages out.
+
+if [[ "${NUM_WORKERS}" == auto ]]; then
+    NUM_WORKERS=$(( ($(nproc) - 2) / GPUS_PER_NODE ))
+    (( NUM_WORKERS >= 1 )) || NUM_WORKERS=1
+fi
+
+# ./env if it exists, otherwise the active environment.
+if [[ -x "${PROJECT_ROOT}/env/bin/python" ]]; then
+    PYTHON="${PROJECT_ROOT}/env/bin/python"
+else
+    PYTHON="$(command -v python || true)"
+    [[ -n "${PYTHON}" ]] || { echo "No ./env and no python on PATH; see README Environment" >&2; exit 2; }
+fi
+# Same as what `conda env config vars` sets for ./env; keeps ~/.local packages out.
 export PYTHONNOUSERSITE=1
-PYTHON="${PROJECT_ROOT}/env/bin/python"
 
 for file in "${DATA_DIR}/train_${DATA_TAG}.ffcv" "${DATA_DIR}/val_${DATA_TAG}.ffcv"; do
     [[ -f "${file}" ]] || { echo "Missing ${file}" >&2; exit 2; }
 done
+if [[ "${IN_MEMORY}" == auto ]]; then
+    train_bytes=$(stat -c %s "${DATA_DIR}/train_${DATA_TAG}.ffcv")
+    ram_bytes=$(( $(awk '/^MemTotal:/ { print $2 }' /proc/meminfo) * 1024 ))
+    IN_MEMORY=$(( train_bytes * 10 < ram_bytes * 8 ? 1 : 0 ))
+fi
 
 # One line of extra flags per method-specific combination.
 method_variants() {
@@ -91,7 +113,7 @@ for epochs in "${EPOCHS[@]}"; do
     done
 done
 
-echo "Sweep ${WANDB_GROUP}: ${#runs[@]} run(s) on GPU(s) ${CUDA_VISIBLE_DEVICES} (lr ${LR}, ${NUM_WORKERS} workers/GPU)"
+echo "Sweep ${WANDB_GROUP}: ${#runs[@]} run(s) on GPU(s) ${CUDA_VISIBLE_DEVICES} (lr ${LR}, ${NUM_WORKERS} workers/GPU, in_memory=${IN_MEMORY}, ${PYTHON})"
 failed=()
 for i in "${!runs[@]}"; do
     IFS='|' read -r epochs method rho seed extra <<< "${runs[$i]}"
