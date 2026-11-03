@@ -51,14 +51,22 @@ Arguments are `<max side length> <JPEG fraction> <JPEG quality>`. This writes `d
 (68.5 GB) and `data/val_500_1.0_90.ffcv` (3.1 GB) in ~7 minutes on 20 CPUs. Images are resized to a longer side of
 at most 500 px and all are stored as quality-90 JPEG.
 
+Each image goes through JPEG with probability `<JPEG fraction>`; the rest are stored as raw pixels
+(~550 KB each at 500 px, about 10x a quality-90 JPEG).
+
 | Setting | Train file | Notes |
 |---|---|---|
-| `500 1.0 90` | 68.5 GB | used here; fits in RAM for `in_memory=1` |
-| `500 0.50 90` | ~326 GB | original ResNet-50 setting (half stored as raw pixels) |
-| `400 0.10 90` | ~388 GB | original ResNet-18 setting |
+| `500 1.0 90` | 68.5 GB (measured) | used here; fits in RAM for `IN_MEMORY=1` |
+| `500 0.50 90` | ~360–390 GB (estimated from a 20k-image subset) | original ResNet-50 setting |
+| `400 0.10 90` | larger still (not measured) | original ResNet-18 setting |
 
-With 18 loader workers, `1.0` and `0.50` load equally fast (~10.5k img/s for the ResNet-18 pipeline on 20 CPUs).
-The raw `imagenet/` folder is not used for training and can be deleted after conversion.
+To train on another setting, set `DATA_TAG` in [scripts/train_rn50.sh](scripts/train_rn50.sh) (e.g. `500_0.50_90`)
+and `IN_MEMORY=0` if the train file does not fit in RAM. Converting needs the raw `imagenet/` folder (~146 GiB) and
+the output on disk at the same time: about 520 GB free for `500 0.50 90`.
+
+With 18 loader workers and the data in RAM, `1.0` and `0.50` load equally fast (~10.5k img/s for the ResNet-18
+pipeline on 20 CPUs); reading from disk with `IN_MEMORY=0` was not measured. The raw `imagenet/` folder is not used
+for training and can be deleted after conversion.
 
 ## Configure and run
 
@@ -69,20 +77,21 @@ GPUS_PER_NODE=1              # GPU processes on this node; > 1 enables DDP
 GPU_IDS=(0)                  # which GPUs, e.g. (0 1 2 3); one id per process
 
 EPOCHS=(88)                  # any; 16 24 32 40 56 88 reproduce rn50_configs/ exactly
-METHODS=(sam)                # sam asam condsam friendlysam fishersam mongesam no_sam
-RHOS=(0.01 0.05)             # perturbation radius (not used by no_sam)
+METHODS=(sam condsam)        # sam asam condsam friendlysam fishersam mongesam no_sam
+RHOS=(0.01 0.05 0.1 0.5 1)   # perturbation radius (not used by no_sam)
 
 # Only used by the matching method:
 FRIENDLYSAM_SIGMAS=(1.0)
 FRIENDLYSAM_LAMBDAS=(0.9)
 FISHERSAM_ETAS=(1.0)
-CONDSAM_BETAS=(0.95)
-CONDSAM_POWER_ITERS=(1)
+CONDSAM_BETAS=(0.99)
+CONDSAM_POWER_ITERS=(5)
 
 SEEDS=(42)
 ```
 
-Every combination runs in turn; the example runs 2 jobs (`sam` with two rho values). `GPU_IDS` must list
+Every combination runs in turn; the example runs 10 jobs (`sam` and `condsam`, each with five rho values; CondSAM with
+beta 0.99 and 5 power iterations). `GPU_IDS` must list
 `GPUS_PER_NODE` ids (DDP is single-node). Fixed settings (per-GPU batch 512, data paths,
 `WANDB_PROJECT=ffcv-imagenet`) are in the `FIXED` block below. The learning rate follows the original 8-GPU recipe
 (1.7 at a global batch of 4096) scaled linearly with the global batch: 0.2125 on one GPU.

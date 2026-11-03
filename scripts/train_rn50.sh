@@ -15,16 +15,16 @@ GPU_IDS=(0)                  # which GPUs, e.g. (0 1 2 3); one id per process
 # ======================================================================
 
 # ============================== SWEEP =================================
-EPOCHS=(88)                 # any; 16 24 32 40 56 88 reproduce rn50_configs/ exactly
-METHODS=(sam)                # sam asam condsam friendlysam fishersam mongesam no_sam
-RHOS=(0.01 0.05)                  # perturbation radius (not used by no_sam)
+EPOCHS=(88)                  # any; 16 24 32 40 56 88 reproduce rn50_configs/ exactly
+METHODS=(sam condsam)        # sam asam condsam friendlysam fishersam mongesam no_sam
+RHOS=(0.01 0.05 0.1 0.5 1)   # perturbation radius (not used by no_sam)
 
 # Only used by the matching method:
 FRIENDLYSAM_SIGMAS=(1.0)
 FRIENDLYSAM_LAMBDAS=(0.9)
 FISHERSAM_ETAS=(1.0)
-CONDSAM_BETAS=(0.95)
-CONDSAM_POWER_ITERS=(1)
+CONDSAM_BETAS=(0.99)
+CONDSAM_POWER_ITERS=(5)
 
 SEEDS=(42)
 # ======================================================================
@@ -36,7 +36,8 @@ LR=$(awk -v b="${BATCH_SIZE}" -v n="${GPUS_PER_NODE}" 'BEGIN { print 1.7 * b * n
 # Loader workers per GPU process; 18 in total saturated this 20-CPU machine.
 NUM_WORKERS=$(( 18 / GPUS_PER_NODE > 0 ? 18 / GPUS_PER_NODE : 1 ))
 DATA_DIR="${PROJECT_ROOT}/data"
-DATA_TAG=500_1.0_90
+DATA_TAG=500_1.0_90          # <max side>_<JPEG fraction>_<quality> from write_imagenet.sh
+IN_MEMORY=1                  # 1 only if the train file fits in RAM (500_0.50_90 does not)
 LOG_DIR="${PROJECT_ROOT}/logs"
 WANDB_PROJECT=ffcv-imagenet
 WANDB_GROUP="rn50-$(date +%Y%m%d-%H%M%S)"     # all runs of this sweep share a group
@@ -109,7 +110,7 @@ for i in "${!runs[@]}"; do
         --data.train_dataset="${DATA_DIR}/train_${DATA_TAG}.ffcv"
         --data.val_dataset="${DATA_DIR}/val_${DATA_TAG}.ffcv"
         --data.num_workers="${NUM_WORKERS}"
-        --data.in_memory=1
+        --data.in_memory="${IN_MEMORY}"
         --training.distributed="${DISTRIBUTED}"
         --dist.world_size="${GPUS_PER_NODE}"
         --training.batch_size="${BATCH_SIZE}"
