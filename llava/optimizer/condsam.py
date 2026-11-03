@@ -127,7 +127,9 @@ class CondSAM(SAM):
                     v = torch.randn(size, device=p.device, dtype=torch.float32)
                     v /= v.norm().clamp_min(torch.finfo(v.dtype).tiny)
                     if self._distributed:
-                        src = dist.get_global_rank(self._process_group, 0)
+                        # None is the default group, which get_global_rank does not accept.
+                        group = self._process_group or dist.group.WORLD
+                        src = dist.get_global_rank(group, 0)
                         dist.broadcast(v, src=src, group=self._process_group)
                     state[key] = v
             beta = self.options['beta']

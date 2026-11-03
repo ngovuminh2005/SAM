@@ -129,7 +129,9 @@ SEEDS=(42)
 ```
 
 Every combination runs in turn; `no_sam` runs once per VFM type and seed. The global batch stays 128 (paper recipe).
-Two GPUs use ZeRO-3; one GPU also offloads the optimizer to CPU RAM. On a one-GPU allocation run
+All runs use ZeRO-3. With 1-2 GPUs the optimizer state (~84 GB fp32) is offloaded to CPU RAM, since on two 80 GB GPUs
+it alone takes 42 GB each and SAM-style runs go out of memory; from 4 GPUs it stays on the GPUs (override with
+`DS_CONFIG=...`). On a one-GPU allocation run
 `GPUS_PER_NODE=1 bash scripts/v1_5/train_sweep.sh` (or `GPU_IDS="2"` to pick the GPU).
 
 One run is ~5200 optimizer steps (665K samples / 128). Every 500 steps the run saves `checkpoint-<step>/` (model +
@@ -151,7 +153,7 @@ Extra arguments go to every run, e.g. `--wandb_mode offline`. A single run:
 ```bash
 deepspeed --include localhost:0,1 llava/train/train_mem.py \
     --config configs/base.yaml --config configs/vfm/covft.yaml --config configs/sam/sam.yaml \
-    --deepspeed scripts/zero3.json --per_device_train_batch_size 4 --gradient_accumulation_steps 16 \
+    --deepspeed scripts/zero3_offload_optimizer.json --per_device_train_batch_size 4 --gradient_accumulation_steps 16 \
     --output_dir checkpoints/llava-covft-sam --sam_rho 0.05 --seed 42
 ```
 

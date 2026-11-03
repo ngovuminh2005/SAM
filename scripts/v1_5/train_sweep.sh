@@ -17,8 +17,8 @@ read -ra GPU_IDS <<< "${GPU_IDS:-$(seq -s ' ' 0 $((GPUS_PER_NODE - 1)))}"   # wh
 
 # ============================== SWEEP =================================
 VFM_TYPES=(covft)            # covft fullft lora bias vpt (configs/vfm/)
-METHODS=(sam)         # no_sam sam asam condsam friendlysam fishersam mongesam (configs/sam/)
-RHOS=(0.01)             # perturbation radius (not used by no_sam)
+METHODS=(condsam)         # no_sam sam asam condsam friendlysam fishersam mongesam (configs/sam/)
+RHOS=(0.01 0.05)             # perturbation radius (not used by no_sam)
 
 # Only used by the matching method:
 FRIENDLYSAM_SIGMAS=(1.0)
@@ -34,8 +34,10 @@ SEEDS=(42)
 GLOBAL_BATCH=128             # LLaVA-1.5 / paper recipe
 PER_DEVICE_BATCH=4           # lower to 2 if a run goes out of memory
 SAM_INCLUDE=vision_tower     # regex of parameters to perturb (the LLM still descends at the perturbed point)
-# ZeRO-3 on several 80GB GPUs; one GPU also offloads the optimizer state to CPU RAM.
-if (( GPUS_PER_NODE > 1 )); then DS_CONFIG=./scripts/zero3.json; else DS_CONFIG=./scripts/zero3_offload_optimizer.json; fi
+# The fp32 optimizer state of the 7B model is ~84 GB, split over the GPUs. With 1-2 80GB GPUs it goes to
+# CPU RAM (it alone would be 42 GB per GPU on 2); from 4 GPUs it stays on the GPUs. Override: DS_CONFIG=...
+if (( GPUS_PER_NODE >= 4 )); then DEFAULT_DS_CONFIG=./scripts/zero3.json; else DEFAULT_DS_CONFIG=./scripts/zero3_offload_optimizer.json; fi
+DS_CONFIG=${DS_CONFIG:-${DEFAULT_DS_CONFIG}}
 MASTER_PORT=29600
 OUTPUT_ROOT=./checkpoints/sweeps
 WANDB_PROJECT=covft
@@ -69,6 +71,8 @@ else
     [[ -n "${DEEPSPEED}" ]] || { echo "No ./env and no deepspeed on PATH; see README Environment" >&2; exit 2; }
 fi
 export PYTHONNOUSERSITE=1
+# Lets PyTorch reuse fragmented GPU memory (fewer out-of-memory errors near the 80 GB limit).
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # One line of extra flags per method-specific combination.
 method_variants() {
