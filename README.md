@@ -154,7 +154,7 @@ Extra arguments go to every run, e.g. `--wandb_mode offline`. A single run:
 ```bash
 deepspeed --include localhost:0,1 llava/train/train_mem.py \
     --config configs/base.yaml --config configs/vfm/covft.yaml --config configs/sam/sam.yaml \
-    --deepspeed scripts/zero3_offload_optimizer.json --per_device_train_batch_size 4 --gradient_accumulation_steps 16 \
+    --deepspeed scripts/zero3_offload_optimizer.json --per_device_train_batch_size 8 --gradient_accumulation_steps 8 \
     --output_dir checkpoints/llava-covft-sam --sam_rho 0.05 --seed 42
 ```
 

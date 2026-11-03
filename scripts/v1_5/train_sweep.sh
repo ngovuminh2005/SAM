@@ -33,7 +33,7 @@ SEEDS=(42)
 
 # ============================== FIXED =================================
 GLOBAL_BATCH=128             # LLaVA-1.5 / paper recipe
-PER_DEVICE_BATCH=4           # lower to 2 if a run goes out of memory
+PER_DEVICE_BATCH=8           # 8 x 2 GPUs x 8 = 128; ~30% faster than 4 (50 GB peak). Every method must use the same value (SAM perturbs per micro-batch)
 SAM_INCLUDE=vision_tower     # regex of parameters to perturb (the LLM still descends at the perturbed point)
 # The fp32 optimizer state of the 7B model is ~84 GB, split over the GPUs. With 1-2 80GB GPUs it goes to
 # CPU RAM (it alone would be 42 GB per GPU on 2); from 4 GPUs it stays on the GPUs. Override: DS_CONFIG=...
