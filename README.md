@@ -112,3 +112,18 @@ share a group and log:
 - `final/*` after training.
 
 Evaluation runs after every epoch on the full 50k validation set at 256 px with flip test-time augmentation.
+
+## Baseline without SAM
+
+Set `METHODS=(no_sam)` in [scripts/train_rn50.sh](scripts/train_rn50.sh); `no_sam` runs once per epoch count and
+seed and ignores `RHOS` and the method-specific values. It uses the original ffcv-imagenet recipe in bf16, the same
+precision as the SAM runs. For the original fp16, pass the flag on the command line:
+
+```bash
+bash scripts/train_rn50.sh                               # bf16, comparable to the SAM runs
+bash scripts/train_rn50.sh --training.precision=fp16     # original precision
+```
+
+Extra flags apply to every run in the sweep, and SAM policies require bf16, so use `--training.precision=fp16` only
+when `METHODS=(no_sam)`. To include the baseline in a SAM sweep instead, add it to the list, e.g.
+`METHODS=(no_sam sam condsam)`.
