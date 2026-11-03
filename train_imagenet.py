@@ -101,6 +101,7 @@ Section('sam', 'perturbation policy, independent of the base optimizer').params(
     condsam_beta=Param(float, 'CondSAM factor EMA beta', default=0.95),
     condsam_eps=Param(float, 'CondSAM eps', default=1e-8),
     condsam_power_iters=Param(int, 'CondSAM power iterations', default=1),
+    condsam_stats_every=Param(int, 'CondSAM: refresh Kronecker factors every N steps', default=1),
     local_perturbation=Param(int, 'under DDP, perturb each rank with its own batch gradient '
                              '(SAM paper m-sharpness) instead of the all-reduced one (1/0)', default=1)
 )
@@ -282,11 +283,12 @@ class ImageNetTrainer:
     @param('sam.condsam_beta')
     @param('sam.condsam_eps')
     @param('sam.condsam_power_iters')
+    @param('sam.condsam_stats_every')
     @param('sam.local_perturbation')
     @param('training.precision')
     def create_policy(self, method, rho, include, exclude, friendlysam_sigma,
                       friendlysam_lambda, fishersam_eta, condsam_beta,
-                      condsam_eps, condsam_power_iters, local_perturbation, precision):
+                      condsam_eps, condsam_power_iters, condsam_stats_every, local_perturbation, precision):
         self.local_perturbation = bool(local_perturbation)
         if method == 'none':
             return None
@@ -299,7 +301,7 @@ class ImageNetTrainer:
         options = dict(rho=rho)
         if method == 'condsam':
             options.update(beta=condsam_beta, eps=condsam_eps,
-                           power_iters=condsam_power_iters)
+                           power_iters=condsam_power_iters, stats_every=condsam_stats_every)
         elif method == 'friendlysam':
             options.update(sigma=friendlysam_sigma, lmbda=friendlysam_lambda)
         elif method == 'fishersam':
@@ -654,7 +656,7 @@ class ImageNetTrainer:
         if method != 'none':
             parts.append(f"rho{params['sam.rho']:g}")
         extras = {
-            'condsam': [('beta', 'condsam_beta'), ('pi', 'condsam_power_iters')],
+            'condsam': [('beta', 'condsam_beta'), ('pi', 'condsam_power_iters'), ('se', 'condsam_stats_every')],
             'friendlysam': [('sigma', 'friendlysam_sigma'), ('lambda', 'friendlysam_lambda')],
             'fishersam': [('eta', 'fishersam_eta')],
         }

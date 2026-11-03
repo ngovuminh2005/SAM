@@ -98,6 +98,7 @@ FRIENDLYSAM_LAMBDAS=(0.9)
 FISHERSAM_ETAS=(1.0)
 CONDSAM_BETAS=(0.99)
 CONDSAM_POWER_ITERS=(5)
+CONDSAM_STATS_EVERY=(1)      # refresh factors every N steps; >1 is faster, 1 is exact
 
 SEEDS=(42)
 ```
@@ -115,7 +116,9 @@ bash scripts/train_rn50.sh               # run
 ```
 
 Arguments after the script name are passed to every run, e.g. `bash scripts/train_rn50.sh --wandb.mode=disabled`.
-On one H100, ResNet-50 + SAM trains at ~3.2k img/s at 160 px (~7 min per epoch), measured with `1.0` data in RAM.
+On one H100 at 160 px with `1.0` data in RAM, ResNet-50 trains at ~3.2k img/s with SAM (~7 min per epoch) and
+~1.5k img/s with CondSAM (5 power iterations). `CONDSAM_STATS_EVERY=10` refreshes the Kronecker factors every 10
+steps, as K-FAC does, for ~2.5k img/s; `1` keeps the exact per-step update.
 
 ### Multi-GPU (DDP)
 
@@ -128,13 +131,13 @@ Kronecker statistics per GPU. `--sam.local_perturbation=0` instead perturbs ever
 (`m` = global batch). DDP is single-node only.
 
 ```bash
-python -m unittest tests.test_ddp_sam      # 2-process gloo checks on CPU, ~1 min
+python -m unittest tests.test_ddp_sam tests.test_condsam    # CPU checks, ~1 min
 ```
 
 ### Outputs
 
 Each run writes `logs/<uuid>/` with `params.json`, a JSON-lines `log`, and `final_weights.pt`. W&B runs of one sweep
-share a group and log:
+share a group, are named like `rn50-condsam-rho0.01-s42`, and log:
 
 - `train/loss`, `train/lr` every 50 steps;
 - `val/top_1`, `val/top_5`, `val/loss` and `epoch/*` (train loss, time, throughput, resolution) after every epoch;

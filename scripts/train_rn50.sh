@@ -25,6 +25,7 @@ FRIENDLYSAM_LAMBDAS=(0.9)
 FISHERSAM_ETAS=(1.0)
 CONDSAM_BETAS=(0.99)
 CONDSAM_POWER_ITERS=(5)
+CONDSAM_STATS_EVERY=(1)      # refresh factors every N steps; >1 is faster, 1 is exact
 
 SEEDS=(42)
 # ======================================================================
@@ -89,10 +90,17 @@ method_variants() {
             for e in "${FISHERSAM_ETAS[@]}"; do echo "--sam.fishersam_eta=${e}"; done ;;
         condsam)
             for b in "${CONDSAM_BETAS[@]}"; do for p in "${CONDSAM_POWER_ITERS[@]}"; do
-                echo "--sam.condsam_beta=${b} --sam.condsam_power_iters=${p}"
+                for e in "${CONDSAM_STATS_EVERY[@]}"; do
+                    echo "--sam.condsam_beta=${b} --sam.condsam_power_iters=${p} --sam.condsam_stats_every=${e}"
+                done
             done; done ;;
         *) echo "" ;;
     esac
+}
+
+# Short W&B name, e.g. rn50-condsam-rho0.01-s42
+run_name() {    # method rho seed
+    if [[ "$2" == none ]]; then echo "rn50-$1-s$3"; else echo "rn50-$1-rho$2-s$3"; fi
 }
 
 for method in "${METHODS[@]}"; do
@@ -123,6 +131,7 @@ echo "Sweep ${WANDB_GROUP}: ${#runs[@]} run(s) on GPU(s) ${CUDA_VISIBLE_DEVICES}
 failed=()
 for i in "${!runs[@]}"; do
     IFS='|' read -r epochs method rho seed extra <<< "${runs[$i]}"
+    name="$(run_name "${method}" "${rho}" "${seed}")"
     # rn50_configs differ only in epochs and the 160->192px ramp, which all
     # follow start = E - (E/4 + 1), end = E - (E/8 + 1); the LR schedule
     # stretches with E, so every epoch count is a complete schedule.
@@ -149,12 +158,13 @@ for i in "${!runs[@]}"; do
         --wandb.mode=online
         --wandb.project="${WANDB_PROJECT}"
         --wandb.group="${WANDB_GROUP}"
+        --wandb.name="${name}"
     )
     [[ "${rho}" != none ]] && command+=(--sam.rho="${rho}")
     [[ -n "${extra}" ]] && read -ra extra_args <<< "${extra}" && command+=("${extra_args[@]}")
     command+=("$@")
 
-    echo "=== [$((i + 1))/${#runs[@]}] epochs=${epochs} method=${method} rho=${rho} seed=${seed} ${extra}"
+    echo "=== [$((i + 1))/${#runs[@]}] ${name}: epochs=${epochs} method=${method} rho=${rho} seed=${seed} ${extra}"
     if [[ "${DRY_RUN:-0}" == 1 ]]; then
         printf '%q ' "${command[@]}"; printf '\n'
         continue

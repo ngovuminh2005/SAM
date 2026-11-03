@@ -14,15 +14,18 @@ from .sam import SAM
 class CondSAM(SAM):
     STATS_CHUNK_BYTES = 256 * 1024**2
 
-    def __init__(self, params, rho=0.05, beta=0.95, eps=1e-8, power_iters=1):
+    def __init__(self, params, rho=0.05, beta=0.95, eps=1e-8, power_iters=1, stats_every=1):
         super().__init__(params, rho=rho, eps=eps)
         if not math.isfinite(beta) or not 0 <= beta < 1:
             raise ValueError('CondSAM beta must be in [0, 1)')
         self._validate_power_iters(power_iters)
-        self.options.update(beta=beta, power_iters=power_iters)
+        if isinstance(stats_every, bool) or not isinstance(stats_every, int) or stats_every < 1:
+            raise ValueError('CondSAM stats_every must be a positive integer')
+        self.options.update(beta=beta, power_iters=power_iters, stats_every=stats_every)
         self._distributed = False
         self._process_group = None
         self._stats_buffers = {}
+        self._observations = 0
 
     @staticmethod
     def _validate_power_iters(value):
@@ -32,18 +35,29 @@ class CondSAM(SAM):
     def _finite_many(self, values, name):
         if not values:
             return
-        invalid = torch.stack([~torch.isfinite(value).all() for value in values]).any().to(torch.int32)
+        # x * 0 is 0 for finite x and NaN otherwise, so each norm is 0 or NaN:
+        # a few multi-tensor kernels instead of one reduction per tensor.
+        norms = torch._foreach_norm(torch._foreach_mul(values, 0.))
+        invalid = (~torch.isfinite(torch.stack(norms))).any().to(torch.int32)
         if self._distributed:
             dist.all_reduce(invalid, op=dist.ReduceOp.MAX, group=self._process_group)
         if invalid.item():
             raise FloatingPointError(f'CondSAM non-finite {name}')
 
     @staticmethod
-    def _outer_sum(rows, out=None):
+    def _outer_sum(rows, out=None, alpha=1.):
         result = out if out is not None else rows.new_zeros((rows.shape[-1], rows.shape[-1]), dtype=torch.float32)
-        for chunk in rows.split(262144):
-            chunk = chunk.float()
-            result.addmm_(chunk.T, chunk)
+        # bf16/fp16 values are exact in TF32, so TF32 products equal fp32 ones
+        # (accumulation stays fp32); this GEMM dominates CondSAM's cost.
+        exact_in_tf32 = rows.dtype in (torch.bfloat16, torch.float16)
+        previous = torch.backends.cuda.matmul.allow_tf32
+        torch.backends.cuda.matmul.allow_tf32 = previous or exact_in_tf32
+        try:
+            for chunk in rows.split(262144):
+                chunk = chunk.float()
+                result.addmm_(chunk.T, chunk, alpha=alpha)
+        finally:
+            torch.backends.cuda.matmul.allow_tf32 = previous
         return result
 
     @torch.no_grad()
@@ -51,9 +65,9 @@ class CondSAM(SAM):
         a_sum, b_sum, count = observation
         if isinstance(module, torch.nn.Linear):
             a = activation.reshape(-1, activation.shape[-1])
-            b = grad.reshape(-1, grad.shape[-1]).float() * batch_size
+            b = grad.reshape(-1, grad.shape[-1])
             self._outer_sum(a, out=a_sum)
-            self._outer_sum(b, out=b_sum)
+            self._outer_sum(b, out=b_sum, alpha=batch_size ** 2)
             count.add_(a.shape[0])
             return
         # Target ~256 MiB of patch/derivative data per chunk; reshape can copy.
@@ -62,7 +76,7 @@ class CondSAM(SAM):
         features = a_sum.shape[0] + b_sum.shape[0]
         chunk_size = max(1, self.STATS_CHUNK_BYTES // (4 * positions * features))
         for start in range(0, activation.shape[0], chunk_size):
-            image = activation[start:start+chunk_size].float()
+            image = activation[start:start+chunk_size]
             derivative = grad[start:start+chunk_size]
             padding = module.padding
             if module.padding_mode != 'zeros' or isinstance(padding, str):
@@ -81,12 +95,19 @@ class CondSAM(SAM):
             patches = patches.unfold(3, dilation_w * (kernel_w - 1) + 1, module.stride[1])
             patches = patches[..., ::dilation_h, ::dilation_w]
             a = patches.permute(0, 2, 3, 1, 4, 5).reshape(-1, a_sum.shape[0])
-            b = derivative.flatten(2).transpose(1, 2).reshape(-1, b_sum.shape[0]).float() * batch_size
+            b = derivative.flatten(2).transpose(1, 2).reshape(-1, b_sum.shape[0])
             self._outer_sum(a, out=a_sum)
-            self._outer_sum(b, out=b_sum)
+            self._outer_sum(b, out=b_sum, alpha=batch_size ** 2)
             count.add_(a.shape[0])
 
     def _layers(self, model):
+        cached = getattr(self, '_layers_cache', None)
+        if cached is not None and cached[0] is model:
+            return cached[1]
+        self._layers_cache = (model, self._find_layers(model))
+        return self._layers_cache[1]
+
+    def _find_layers(self, model):
         owned = {id(p) for p in self.params}
         # Shared weights with unsupported owners (e.g. tied embeddings) use SAM.
         owners = {}
@@ -128,12 +149,14 @@ class CondSAM(SAM):
             active = count > 0
             weight = active.float() * (1 - beta)
             for key, total in [('A', a_sum), ('B', b_sum)]:
-                state[key].lerp_(total / count.clamp_min(1), weight)
+                # In place: the sums are zeroed before the next collection
+                state[key].lerp_(total.div_(count.clamp_min(1)), weight)
             for matrix, vector in [('A', 'x'), ('B', 'y')]:
                 for _ in range(power_iters):
                     v = state[matrix] @ state[vector]
-                    power_values.append(v)
-                    norm = torch.linalg.vector_norm(v.double())
+                    norm = torch.linalg.vector_norm(v, dtype=torch.float64)
+                    # A float32 vector is finite iff its float64 norm is
+                    power_values.append(norm)
                     candidate = (v.double() / norm.clamp_min(torch.finfo(torch.float64).tiny)).float()
                     state[vector] = torch.where(active & (norm > 0), candidate, state[vector])
         self._finite_many(power_values, 'power iteration')
@@ -161,6 +184,11 @@ class CondSAM(SAM):
         """
         if batch_size <= 0:
             raise ValueError('batch_size must be positive')
+        # Between refreshes the factors and power vectors are reused as they are
+        self._observations += 1
+        if (self._observations - 1) % self.options['stats_every']:
+            yield
+            return
         is_ddp = isinstance(model, torch.nn.parallel.DistributedDataParallel)
         self._process_group = model.process_group if is_ddp else None
         self._distributed = is_ddp and dist.get_world_size(self._process_group) > 1
@@ -209,17 +237,22 @@ class CondSAM(SAM):
                 handle.remove()
         pooled = {}
         # Keep the parameter order identical on every DDP worker, even if a
-        # layer was unused locally. DataParallel replica statistics sum here.
+        # layer was unused locally. The buffers on the parameter's own device
+        # (zeroed above) are the totals; DataParallel replicas add into them.
         for p, _ in layers:
-            out_dim, in_dim = p.shape[0], p.numel() // p.shape[0]
-            pooled[p] = (
-                torch.zeros(in_dim, in_dim, device=p.device, dtype=torch.float32),
-                torch.zeros(out_dim, out_dim, device=p.device, dtype=torch.float32),
-                torch.zeros((), device=p.device, dtype=torch.float64),
-            )
-        for (p, _), buffers in observations.items():
-            for total, value in zip(pooled[p], buffers):
-                total.add_(value.to(p.device))
+            key = (p, p.device)
+            if key not in self._stats_buffers:
+                out_dim, in_dim = p.shape[0], p.numel() // p.shape[0]
+                self._stats_buffers[key] = (
+                    torch.zeros(in_dim, in_dim, device=p.device, dtype=torch.float32),
+                    torch.zeros(out_dim, out_dim, device=p.device, dtype=torch.float32),
+                    torch.zeros((), device=p.device, dtype=torch.float64),
+                )
+            pooled[p] = self._stats_buffers[key]
+        for (p, device), buffers in observations.items():
+            if device != p.device:
+                for total, value in zip(pooled[p], buffers):
+                    total.add_(value.to(p.device))
         self._update_factors(pooled)
 
     def _directions(self):
