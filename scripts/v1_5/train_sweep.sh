@@ -24,8 +24,8 @@ RHOS=(0.01)             # perturbation radius (not used by no_sam)
 FRIENDLYSAM_SIGMAS=(1.0)
 FRIENDLYSAM_LAMBDAS=(0.9)
 FISHERSAM_ETAS=(1.0)
-CONDSAM_BETAS=(0.95)
-CONDSAM_POWER_ITERS=(1)
+CONDSAM_BETAS=(0.99)
+CONDSAM_POWER_ITERS=(5)
 
 SEEDS=(42)
 # ======================================================================
