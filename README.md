@@ -23,6 +23,18 @@ exists, otherwise `python` from the active environment.
 - `PYTHONNOUSERSITE=1` keeps packages in `~/.local` out of the environment.
 - CuPy is not needed; images are normalized on the GPU with torch.
 
+### W&B
+
+Runs log to W&B online, so a new machine needs your API key (https://wandb.ai/authorize):
+
+```bash
+wandb login                          # once per machine; stores the key in ~/.netrc
+export WANDB_API_KEY=<your-key>      # or, per shell (clusters, containers)
+```
+
+Without a key, set `--wandb.mode=offline` (sync later with `wandb sync logs/<uuid>/wandb/offline-run-*`) or
+`--wandb.mode=disabled`.
+
 ## Datasets
 
 **1. Download ImageNet-1K (ILSVRC2012)**
