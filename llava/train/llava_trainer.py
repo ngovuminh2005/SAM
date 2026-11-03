@@ -224,6 +224,16 @@ class LLaVATrainer(Trainer):
                     f'exclude={args.sam_exclude!r}')
         return POLICIES[args.sam_method]([p for _, p in selected], **options)
 
+    def get_batch_samples(self, epoch_iterator, num_batches):
+        # transformers 4.47 counts the label tokens of the accumulated batches even when the model
+        # cannot use them (LLaVA's forward takes no **kwargs), and training_step then skips the
+        # division by gradient_accumulation_steps: the logged loss came out x GA (gradients were
+        # fine, DeepSpeed/accelerate scale them). Without the count the logged loss is the mean.
+        batch_samples, num_items_in_batch = super().get_batch_samples(epoch_iterator, num_batches)
+        if not self.model_accepts_loss_kwargs:
+            num_items_in_batch = None
+        return batch_samples, num_items_in_batch
+
     def training_step(self, model, inputs, num_items_in_batch=None):
         if self.args.sam_method == 'none':
             return super().training_step(model, inputs, num_items_in_batch)
@@ -249,7 +259,10 @@ class LLaVATrainer(Trainer):
             grads = list(torch.autograd.grad(clean_loss, params, allow_unused=True))
         clean_loss = clean_loss.detach()
         release_zero3_parameters(model)
-        grads = [torch.zeros_like(p) if g is None and shared else g for p, g in zip(params, grads)]
+        # A parameter outside this rank's graph still joins the all-reduce. Under ZeRO-3 p is a
+        # shape-[0] partition here, so the zeros take the full shape (ds_shape).
+        grads = [torch.zeros(getattr(p, 'ds_shape', p.shape), dtype=p.dtype, device=clean_loss.device)
+                 if g is None and shared else g for p, g in zip(params, grads)]
         if shared:
             # Perturb every rank with the all-reduced gradient (m = global batch).
             flat = torch.cat([g.float().flatten() for g in grads])

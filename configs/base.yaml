@@ -31,7 +31,7 @@ training:
   per_device_eval_batch_size: 4
   logging_steps: 1
   save_strategy: steps
-  save_steps: 10000
+  save_steps: 500         # resume point: rerun with the same output_dir (see README)
   save_total_limit: 1
   report_to: wandb
 wandb:

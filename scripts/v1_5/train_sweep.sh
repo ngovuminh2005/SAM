@@ -10,14 +10,15 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 # =============================== GPUS =================================
-GPUS_PER_NODE=2              # processes on this node; > 1 runs data parallel (DeepSpeed)
-GPU_IDS=(0 1)                # which GPUs, one id per process
+# Both can also come from the environment: GPUS_PER_NODE=1 GPU_IDS="3" bash scripts/v1_5/train_sweep.sh
+GPUS_PER_NODE=${GPUS_PER_NODE:-2}                                      # processes on this node; > 1 runs data parallel (DeepSpeed)
+read -ra GPU_IDS <<< "${GPU_IDS:-$(seq -s ' ' 0 $((GPUS_PER_NODE - 1)))}"   # which GPUs, one id per process (default 0..N-1)
 # ======================================================================
 
 # ============================== SWEEP =================================
 VFM_TYPES=(covft)            # covft fullft lora bias vpt (configs/vfm/)
-METHODS=(no_sam sam)         # no_sam sam asam condsam friendlysam fishersam mongesam (configs/sam/)
-RHOS=(0.01 0.05)             # perturbation radius (not used by no_sam)
+METHODS=(sam)         # no_sam sam asam condsam friendlysam fishersam mongesam (configs/sam/)
+RHOS=(0.01)             # perturbation radius (not used by no_sam)
 
 # Only used by the matching method:
 FRIENDLYSAM_SIGMAS=(1.0)
@@ -38,7 +39,9 @@ if (( GPUS_PER_NODE > 1 )); then DS_CONFIG=./scripts/zero3.json; else DS_CONFIG=
 MASTER_PORT=29600
 OUTPUT_ROOT=./checkpoints/sweeps
 WANDB_PROJECT=covft
-WANDB_GROUP="sweep-$(date +%Y%m%d-%H%M%S)"     # all runs of this sweep share a group
+# All runs of this sweep share a group and live in ${OUTPUT_ROOT}/${WANDB_GROUP}/. Pass an old group to
+# resume it: WANDB_GROUP=sweep-20261103-090615 bash scripts/v1_5/train_sweep.sh
+WANDB_GROUP="${WANDB_GROUP:-sweep-$(date +%Y%m%d-%H%M%S)}"
 # ======================================================================
 
 (( ${#GPU_IDS[@]} == GPUS_PER_NODE )) || {
@@ -58,6 +61,9 @@ if [[ -x "${PROJECT_ROOT}/env/bin/deepspeed" ]]; then
     DEEPSPEED="${PROJECT_ROOT}/env/bin/deepspeed"
     export CUDA_HOME="${CUDA_HOME:-${PROJECT_ROOT}/env}"
     export PATH="${PROJECT_ROOT}/env/bin:${PATH}"
+    # The env is used without `conda activate`: load its W&B key hook (keeps an exported key).
+    WANDB_HOOK="${PROJECT_ROOT}/env/etc/conda/activate.d/wandb.sh"
+    [[ -z "${WANDB_API_KEY:-}" && -f "${WANDB_HOOK}" ]] && source "${WANDB_HOOK}"
 else
     DEEPSPEED="$(command -v deepspeed || true)"
     [[ -n "${DEEPSPEED}" ]] || { echo "No ./env and no deepspeed on PATH; see README Environment" >&2; exit 2; }

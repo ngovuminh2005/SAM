@@ -42,7 +42,7 @@ einops
 ninja
 
 # Flash Attention 2 (installed separately, see README)
-# pip install flash-attn==2.7.4.post1 --no-build-isolation
+# prebuilt wheel, see README (pip install flash-attn==2.7.4.post1 fails on tmpfs /tmp + NFS cache)
 
 # Optional: xformers (alternative to flash-attn)
 # xformers
