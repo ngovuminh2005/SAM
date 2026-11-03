@@ -3,6 +3,7 @@
 import math
 import threading
 import warnings
+from collections import defaultdict
 from contextlib import contextmanager
 
 import torch
@@ -10,6 +11,76 @@ import torch.distributed as dist
 import torch.nn.functional as F
 
 from .sam import SAM
+
+
+@contextmanager
+def _fp32_matmul():
+    """Full fp32 matmuls: bmm/baddbmm would otherwise use TF32 when allow_tf32 is set
+    globally (HF's tf32 flag), unlike the per-layer matrix-vector products they replace."""
+    previous = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    try:
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = previous
+
+
+class _Group:
+    """The Kronecker factors of one size d and device, stacked so one bmm serves them all.
+
+    slots[j] = (layer index, 'A' or 'B'); stats/mats are (k, d, d), vecs (k, d). The layer
+    states hold the views mat_views[j] / vec_views[j], so updates must stay in place.
+    """
+    def __init__(self, d, device, slots):
+        k = len(slots)
+        self.slots = slots
+        self.layer_index = torch.tensor([i for i, _ in slots], device=device)
+        self.stats = torch.zeros(k, d, d, device=device, dtype=torch.float32)
+        self.mats = torch.zeros(k, d, d, device=device, dtype=torch.float32)
+        self.vecs = torch.zeros(k, d, device=device, dtype=torch.float32)
+        self.mat_views = list(self.mats.unbind(0))
+        self.vec_views = list(self.vecs.unbind(0))
+        self.stat_views = list(self.stats.unbind(0))
+        # Rows of the stack holding A (resp. B) factors, and the layers they belong to.
+        self.rows = {}
+        for which in 'AB':
+            rows = [j for j, (_, w) in enumerate(slots) if w == which]
+            if rows:
+                rows = torch.tensor(rows, device=device)
+                self.rows[which] = (rows, self.layer_index[rows])
+
+
+class _Layout:
+    """Per-layer statistics and factors as views into a few stacked tensors (one per size).
+
+    Built once per set of conditioned layers; it replaces ~10^4 small per-layer kernels of
+    the factor update and the perturbation with a few batched ones.
+    """
+    def __init__(self, layers, matrix_shape):
+        self.params = [p for p, _ in layers]
+        self.index = {p: i for i, p in enumerate(self.params)}
+        device = self.params[0].device
+        self.counts = torch.zeros(len(self.params), device=device, dtype=torch.float64)
+        self.count_views = list(self.counts.unbind(0))
+        by_size = defaultdict(list)
+        for i, p in enumerate(self.params):
+            out_dim, in_dim = matrix_shape(p)
+            by_size[(in_dim, p.device)].append((i, 'A'))
+            by_size[(out_dim, p.device)].append((i, 'B'))
+        self.groups = [_Group(d, dev, slots) for (d, dev), slots in by_size.items()]
+        self.slot = {}
+        for group in self.groups:
+            for j, (i, which) in enumerate(group.slots):
+                self.slot[(i, which)] = (group, j)
+        # x^T A x and ||A||_F^2 per layer and factor, refreshed whenever the factors change.
+        self.quad = {w: torch.zeros(len(self.params), device=device) for w in 'AB'}
+        self.sqnorm = {w: torch.zeros(len(self.params), device=device) for w in 'AB'}
+        self.ready = set()  # layer indices whose state is the stacked views
+
+    def stats(self, i):
+        """(A statistics, B statistics, row count) of layer i: the hooks accumulate into these."""
+        (a, ja), (b, jb) = self.slot[(i, 'A')], self.slot[(i, 'B')]
+        return a.stat_views[ja], b.stat_views[jb], self.count_views[i]
 
 
 class CondSAM(SAM):
@@ -27,6 +98,7 @@ class CondSAM(SAM):
         self._stats_buffers = {}
         self._observe_calls = 0
         self._layer_cache = None
+        self._layout = None
         self._checked_coverage = False
 
     @staticmethod
@@ -52,6 +124,15 @@ class CondSAM(SAM):
             dist.all_reduce(invalid, op=dist.ReduceOp.MAX, group=self._process_group)
         if invalid.item():
             raise FloatingPointError(f'CondSAM non-finite {name}')
+
+    def _finite_flags(self, checks):
+        """checks: [(name, tensor)]. One reduction and one host sync for all of them."""
+        invalid = torch.stack([~torch.isfinite(value).all() for _, value in checks]).to(torch.int32)
+        if self._distributed:
+            dist.all_reduce(invalid, op=dist.ReduceOp.MAX, group=self._process_group)
+        for (name, _), bad in zip(checks, invalid.tolist()):
+            if bad:
+                raise FloatingPointError(f'CondSAM non-finite {name}')
 
     @staticmethod
     def _outer_sum(rows, out=None, alpha=1.0, exact_in_tf32=False):
@@ -136,56 +217,105 @@ class CondSAM(SAM):
                 if p.requires_grad and all(isinstance(m, torch.nn.Linear) or
                     (isinstance(m, torch.nn.Conv2d) and m.groups == 1) for m in modules)]
 
+    def _sync_layout(self):
+        """Move factors that are not the layout's views (first use, load_state_dict) into it."""
+        layout, moved = self._layout, False
+        for i, p in enumerate(layout.params):
+            state = self.state.get(p)
+            if not state or 'A' not in state:
+                continue
+            for which, vec in (('A', 'x'), ('B', 'y')):
+                group, j = layout.slot[(i, which)]
+                if state[which] is not group.mat_views[j]:
+                    group.mats[j].copy_(state[which])
+                    group.vecs[j].copy_(state[vec])
+                    state[which], state[vec] = group.mat_views[j], group.vec_views[j]
+                    moved = True
+            layout.ready.add(i)
+        if moved:
+            self._refresh_factor_summaries()
+
     @torch.no_grad()
-    def _update_factors(self, observations):
+    def _refresh_factor_summaries(self):
+        """x^T A x and ||A||_F^2 (and for B, y) per layer, for the perturbation."""
+        layout = self._layout
+        with _fp32_matmul():
+            for group in layout.groups:
+                sqnorm = group.mats.square().sum((1, 2))
+                quad = torch.bmm(torch.bmm(group.vecs.unsqueeze(1), group.mats),
+                                 group.vecs.unsqueeze(2)).view(-1)
+                for which, (rows, index) in group.rows.items():
+                    layout.quad[which].index_copy_(0, index, quad[rows])
+                    layout.sqnorm[which].index_copy_(0, index, sqnorm[rows])
+
+    @torch.no_grad()
+    def _update_factors(self):
+        layout = self._layout
         if self._distributed:
-            # Issued together so NCCL overlaps them; one blocking call per tensor was serial.
-            works = [dist.all_reduce(value, group=self._process_group, async_op=True)
-                     for values in observations.values() for value in values]
+            # A few large all-reduces (one per factor size) instead of one per layer.
+            works = [dist.all_reduce(group.stats, group=self._process_group, async_op=True)
+                     for group in layout.groups]
+            works.append(dist.all_reduce(layout.counts, group=self._process_group, async_op=True))
             for work in works:
                 work.wait()
-        self._finite_many([value for values in observations.values() for value in values], 'factor statistics')
-        power_values = []
-        for p, (a_sum, b_sum, count) in observations.items():
-            power_iters = self.options['power_iters']
-            self._validate_power_iters(power_iters)
-            state = self.state[p]
-            first_observation = 'A' not in state
-            if first_observation:
-                # This synchronization is needed only on initial observation.
-                if count.item() == 0:
+        power_iters = self.options['power_iters']
+        self._validate_power_iters(power_iters)
+        self._sync_layout()
+        counts = layout.counts
+        new = [i for i in range(len(layout.params)) if i not in layout.ready]
+        if new:
+            # First observation: identity factors and random unit vectors (eager, once per
+            # layer, in the same order and with the same RNG draws as per-layer code).
+            observed = (counts[new] > 0).tolist()
+            for i, seen in zip(new, observed):
+                if not seen:
                     continue
-                state['A'] = torch.eye(a_sum.shape[0], device=p.device, dtype=torch.float32)
-                state['B'] = torch.eye(b_sum.shape[0], device=p.device, dtype=torch.float32)
-                for key, size in [('x', a_sum.shape[0]), ('y', b_sum.shape[0])]:
-                    v = torch.randn(size, device=p.device, dtype=torch.float32)
+                p = layout.params[i]
+                state = self.state[p]
+                for which in 'AB':
+                    group, j = layout.slot[(i, which)]
+                    group.mats[j].copy_(torch.eye(group.mats.shape[-1], device=p.device))
+                for which, key in (('A', 'x'), ('B', 'y')):
+                    group, j = layout.slot[(i, which)]
+                    v = torch.randn(group.vecs.shape[-1], device=p.device, dtype=torch.float32)
                     v /= v.norm().clamp_min(torch.finfo(v.dtype).tiny)
                     if self._distributed:
                         # None is the default group, which get_global_rank does not accept.
-                        group = self._process_group or dist.group.WORLD
-                        src = dist.get_global_rank(group, 0)
+                        src = dist.get_global_rank(self._process_group or dist.group.WORLD, 0)
                         dist.broadcast(v, src=src, group=self._process_group)
-                    state[key] = v
-            beta = self.options['beta']
-            active = count > 0
-            weight = active.float() * (1 - beta)
-            for key, total in [('A', a_sum), ('B', b_sum)]:
-                state[key].lerp_(total / count.clamp_min(1), weight)
-            for matrix, vector in [('A', 'x'), ('B', 'y')]:
+                    group.vecs[j].copy_(v)
+                for which, key in (('A', 'x'), ('B', 'y')):
+                    group, j = layout.slot[(i, which)]
+                    state[which], state[key] = group.mat_views[j], group.vec_views[j]
+                layout.ready.add(i)
+        active = counts > 0
+        weight = active.float() * (1 - self.options['beta'])
+        denominator = counts.clamp_min(1).float()
+        tiny = torch.finfo(torch.float64).tiny
+        checks = []
+        with _fp32_matmul():
+            for group in layout.groups:
+                index = group.layer_index
+                # Statistics that are not finite reach the factor through the EMA (also with
+                # weight 0), so checking ||factor|| afterwards covers them without a copy.
+                group.mats.lerp_(group.stats / denominator[index].view(-1, 1, 1), weight[index].view(-1, 1, 1))
+                keep = active[index].unsqueeze(1)
                 for _ in range(power_iters):
-                    v = state[matrix] @ state[vector]
-                    power_values.append(v)
-                    norm = torch.linalg.vector_norm(v.double())
-                    candidate = (v.double() / norm.clamp_min(torch.finfo(torch.float64).tiny)).float()
-                    state[vector] = torch.where(active & (norm > 0), candidate, state[vector])
-        self._finite_many(power_values, 'power iteration')
+                    v = torch.bmm(group.mats, group.vecs.unsqueeze(2)).squeeze(2)
+                    norm = torch.linalg.vector_norm(v.double(), dim=1)
+                    checks.append(('power iteration', norm))
+                    candidate = (v.double() / norm.clamp_min(tiny).unsqueeze(1)).float()
+                    group.vecs.copy_(torch.where(keep & (norm > 0).unsqueeze(1), candidate, group.vecs))
+        self._refresh_factor_summaries()
+        checks = [('factor statistics', layout.sqnorm[w]) for w in 'AB'] + checks
+        self._finite_flags(checks)
         if not self._checked_coverage:
             # A module run through .forward() or a functional call skips hooks and would
             # silently keep the plain SAM direction.
             self._checked_coverage = True
-            missing = sum('A' not in self.state[p] for p in observations)
+            missing = len(layout.params) - len(layout.ready)
             if missing:
-                warnings.warn(f'CondSAM: {missing} of {len(observations)} conditioned layers got no '
+                warnings.warn(f'CondSAM: {missing} of {len(layout.params)} conditioned layers got no '
                               'statistics in the first update (hooks not called?); they use the SAM direction')
 
     @staticmethod
@@ -231,10 +361,22 @@ class CondSAM(SAM):
         # The module tree does not change during training; walking a 7B model per call is slow.
         if self._layer_cache is None or self._layer_cache[0] is not model:
             self._layer_cache = (model, self._layers(model))
+            self._layout = None
         layers = self._layer_cache[1]
-        for buffers in self._stats_buffers.values():
-            for value in buffers:
-                value.zero_()
+        if not layers:
+            yield
+            return
+        if self._layout is None:
+            self._layout = _Layout(layers, self._matrix_shape)
+            self._stats_buffers = {(p, p.device): self._layout.stats(i) for i, p in enumerate(self._layout.params)}
+        layout = self._layout
+        for group in layout.groups:
+            group.stats.zero_()
+        layout.counts.zero_()
+        for (p, device), buffers in self._stats_buffers.items():
+            if device != p.device:  # DataParallel replicas
+                for value in buffers:
+                    value.zero_()
 
         def hook(p):
             def forward(module, inputs, output):
@@ -272,34 +414,63 @@ class CondSAM(SAM):
         finally:
             for handle in handles:
                 handle.remove()
-        pooled = {}
-        # Keep the parameter order identical on every DDP worker, even if a
-        # layer was unused locally. The statistics on the parameter's own device
-        # are the pooled ones (zeroed above); DataParallel replicas add into them.
-        for p, _ in layers:
-            key = (p, p.device)
-            if key not in self._stats_buffers:
-                out_dim, in_dim = self._matrix_shape(p)
-                self._stats_buffers[key] = (
-                    torch.zeros(in_dim, in_dim, device=p.device, dtype=torch.float32),
-                    torch.zeros(out_dim, out_dim, device=p.device, dtype=torch.float32),
-                    torch.zeros((), device=p.device, dtype=torch.float64),
-                )
-            pooled[p] = self._stats_buffers[key]
+        # The statistics on the parameter's own device are the layout's views (zeroed
+        # above); DataParallel replicas add into them. Every DDP worker reduces the same
+        # stacked tensors, used locally or not.
         for (p, device), buffers in observations.items():
             if device != p.device:
-                for total, value in zip(pooled[p], buffers):
+                for total, value in zip(self._stats_buffers[(p, p.device)], buffers):
                     total.add_(value.to(p.device))
-        self._update_factors(pooled)
+        self._update_factors()
 
     def _directions(self):
-        return {p: self._direction(g, self.state[p], self.options['eps'])
-                for p, g in self._gradients().items()}
+        gradients = self._gradients()
+        layout, eps = self._layout, self.options['eps']
+        if layout is None:  # factors loaded but never observed: per-layer formula
+            return {p: self._direction(g, self.state[p], eps) for p, g in gradients.items()}
+        self._sync_layout()
+        directions, buckets = {}, defaultdict(list)
+        for p, g in gradients.items():
+            i = layout.index.get(p)
+            if i is None or i not in layout.ready:
+                directions[p] = g.float()
+            else:
+                buckets[(tuple(g.shape), g.device)].append((p, i))
+        # Same formula as _direction, batched over the layers of one gradient shape.
+        for (shape, device), members in buckets.items():
+            index = torch.tensor([i for _, i in members], device=device)
+            g = torch.stack([gradients[p].float().reshape(shape[0], -1) for p, _ in members])
+            x = torch.stack([self.state[p]['x'] for p, _ in members])
+            y = torch.stack([self.state[p]['y'] for p, _ in members])
+            with _fp32_matmul():
+                s = torch.bmm(torch.bmm(y.unsqueeze(1), g), x.unsqueeze(2)).view(-1)
+            denominator = s + torch.where(s >= 0, eps, -eps)
+            spectral = layout.quad['A'][index] * layout.quad['B'][index]
+            direction = (spectral.square() / (2 * denominator)).view(-1, 1, 1) * (y.unsqueeze(2) * x.unsqueeze(1))
+            norms = layout.sqnorm['A'][index] * layout.sqnorm['B'][index]
+            direction -= (norms / (2 * g[0].numel() * (g.square().sum((1, 2)) + eps))).view(-1, 1, 1) * g
+            empty = direction.flatten(1).count_nonzero(1) == 0
+            direction = torch.where(empty.view(-1, 1, 1), g, direction)
+            for k, (p, _) in enumerate(members):
+                directions[p] = direction[k].view(shape)
+        return {p: directions[p] for p in gradients}
+
+    def state_dict(self):
+        # Copy each layer's factors on its own: deep-copying the stacked views would save
+        # every stack once per layer.
+        stacked = self.state
+        self.state = defaultdict(dict, {p: {k: v.clone() if torch.is_tensor(v) else v for k, v in st.items()}
+                                        for p, st in stacked.items()})
+        try:
+            return super().state_dict()
+        finally:
+            self.state = stacked
 
     def load_state_dict(self, checkpoint):
         super().load_state_dict(checkpoint)
         self._validate_power_iters(self.options['power_iters'])
         self._stats_buffers.clear()
+        self._layout = None
         for state in self.state.values():
             for key in ('A', 'B', 'x', 'y'):
                 if key in state:
