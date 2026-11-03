@@ -1,0 +1,5 @@
+# Visual prompt tuning, from scripts/v1_5/finetune_vpt_vfm.sh
+model:
+  version: v1
+  vfm_tuning_type: vpt
+  vpt_num_prompts: 50

@@ -1,0 +1,7 @@
+# LoRA on the vision encoder, from scripts/v1_5/finetune_lora_vfm.sh
+model:
+  version: v1
+  vfm_tuning_type: lora
+  vfm_lora_rank: 8
+  vfm_lora_alpha: 16
+  vfm_lora_dropout: 0.05

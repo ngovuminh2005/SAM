@@ -1,0 +1,4 @@
+# BitFit on the vision encoder, from scripts/v1_5/finetune_biastune_vfm.sh
+model:
+  version: v1
+  vfm_tuning_type: bias

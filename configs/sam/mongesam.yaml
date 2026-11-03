@@ -1,0 +1,4 @@
+# Radius and method options default to llava/optimizer/defaults.ini;
+# override per run with --sam_rho etc.
+sam:
+  method: mongesam

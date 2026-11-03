@@ -1,0 +1,11 @@
+# CoVFT (ours), from scripts/v1_5/covft_exp4_last12L_layernorm.sh
+model:
+  version: v1_w_context
+  vfm_tuning_type: context_moe_layernorm
+  moe_num_experts: 4
+  moe_top_k: 4          # must equal moe_num_experts (sparse routing is not supported)
+  moe_start_layer: 11
+  context_embedding_model: bert-base-uncased
+  context_embedding_dim: 768
+training:
+  regularization_weight: 0.0

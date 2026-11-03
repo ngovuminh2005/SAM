@@ -1,0 +1,3 @@
+# Baseline: one forward/backward pass per step.
+sam:
+  method: none
