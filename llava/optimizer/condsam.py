@@ -2,6 +2,7 @@
 
 import math
 import threading
+import warnings
 from contextlib import contextmanager
 
 import torch
@@ -26,6 +27,7 @@ class CondSAM(SAM):
         self._stats_buffers = {}
         self._observe_calls = 0
         self._layer_cache = None
+        self._checked_coverage = False
 
     @staticmethod
     def _validate_positive_int(value, name):
@@ -118,9 +120,15 @@ class CondSAM(SAM):
 
     def _layers(self, model):
         owned = {id(p) for p in self.params}
+        # nn.MultiheadAttention applies out_proj.weight inside F.multi_head_attention_forward
+        # without calling the module, so a hook never sees its input: leave it to SAM.
+        unobservable = {id(m.out_proj) for m in model.modules()
+                        if isinstance(m, torch.nn.MultiheadAttention)}
         # Shared weights with unsupported owners (e.g. tied embeddings) use SAM.
         owners = {}
         for module in model.modules():
+            if id(module) in unobservable:
+                continue
             p = getattr(module, 'weight', None)
             if isinstance(p, torch.nn.Parameter) and id(p) in owned:
                 owners.setdefault(p, []).append(module)
@@ -171,6 +179,14 @@ class CondSAM(SAM):
                     candidate = (v.double() / norm.clamp_min(torch.finfo(torch.float64).tiny)).float()
                     state[vector] = torch.where(active & (norm > 0), candidate, state[vector])
         self._finite_many(power_values, 'power iteration')
+        if not self._checked_coverage:
+            # A module run through .forward() or a functional call skips hooks and would
+            # silently keep the plain SAM direction.
+            self._checked_coverage = True
+            missing = sum('A' not in self.state[p] for p in observations)
+            if missing:
+                warnings.warn(f'CondSAM: {missing} of {len(observations)} conditioned layers got no '
+                              'statistics in the first update (hooks not called?); they use the SAM direction')
 
     @staticmethod
     def _direction(gradient, state, eps):
