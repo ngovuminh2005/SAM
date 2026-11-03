@@ -26,6 +26,7 @@ FRIENDLYSAM_LAMBDAS=(0.9)
 FISHERSAM_ETAS=(1.0)
 CONDSAM_BETAS=(0.99)
 CONDSAM_POWER_ITERS=(5)
+CONDSAM_UPDATE_INTERVALS=(1)   # update the Kronecker factors every k micro-batches (1 = every one)
 
 SEEDS=(42)
 # ======================================================================
@@ -85,7 +86,12 @@ method_variants() {
             for e in "${FISHERSAM_ETAS[@]}"; do echo "--sam_fishersam_eta ${e}"; done ;;
         condsam)
             for b in "${CONDSAM_BETAS[@]}"; do for p in "${CONDSAM_POWER_ITERS[@]}"; do
-                echo "--sam_condsam_beta ${b} --sam_condsam_power_iters ${p}"
+                for u in "${CONDSAM_UPDATE_INTERVALS[@]}"; do
+                    # Default 1 adds no flag, so run names (and resumable dirs) stay as before.
+                    flags="--sam_condsam_beta ${b} --sam_condsam_power_iters ${p}"
+                    (( u == 1 )) || flags+=" --sam_condsam_update_interval ${u}"
+                    echo "${flags}"
+                done
             done; done ;;
         *) echo "" ;;
     esac

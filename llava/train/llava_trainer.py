@@ -213,7 +213,8 @@ class LLaVATrainer(Trainer):
         options = dict(rho=args.sam_rho)
         if args.sam_method == 'condsam':
             options.update(beta=args.sam_condsam_beta, eps=args.sam_condsam_eps,
-                           power_iters=args.sam_condsam_power_iters)
+                           power_iters=args.sam_condsam_power_iters,
+                           update_interval=args.sam_condsam_update_interval)
         elif args.sam_method == 'friendlysam':
             options.update(sigma=args.sam_friendlysam_sigma, lmbda=args.sam_friendlysam_lambda)
         elif args.sam_method == 'fishersam':

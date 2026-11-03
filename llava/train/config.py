@@ -33,7 +33,8 @@ _SAM_OPTIONS = {
     'FisherSAM': {'eta': ('sam_fishersam_eta', float)},
     'CondSAM': {'beta': ('sam_condsam_beta', float),
                 'eps': ('sam_condsam_eps', float),
-                'power_iters': ('sam_condsam_power_iters', int)},
+                'power_iters': ('sam_condsam_power_iters', int),
+                'update_interval': ('sam_condsam_update_interval', int)},
 }
 
 
@@ -64,7 +65,7 @@ def load_sam_defaults(path, method='none'):
                 raise ValueError(f'[{section}] {key} must be finite')
             if key in ('beta', 'lmbda'):
                 valid, expected = 0 <= value < 1, 'in [0, 1)'
-            elif key in ('eps', 'power_iters'):
+            elif key in ('eps', 'power_iters', 'update_interval'):
                 valid, expected = value > 0, 'positive'
             else:
                 valid, expected = value >= 0, 'nonnegative'
@@ -168,6 +169,8 @@ def wandb_run_name(model_args, training_args):
     }
     for label, key in extras.get(method, []):
         parts.append(f'{label}{getattr(training_args, key):g}')
+    if method == 'condsam' and training_args.sam_condsam_update_interval != 1:
+        parts.append(f'ui{training_args.sam_condsam_update_interval}')
     parts += [f'lr{training_args.learning_rate:g}', f'seed{training_args.seed}']
     return '-'.join(parts)
 

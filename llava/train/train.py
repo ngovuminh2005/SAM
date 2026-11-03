@@ -150,6 +150,8 @@ class TrainingArguments(transformers.TrainingArguments):
     sam_condsam_beta: float = 0.95
     sam_condsam_eps: float = 1e-8
     sam_condsam_power_iters: int = 1
+    sam_condsam_update_interval: int = field(default=1, metadata={
+        "help": "Collect statistics and update CondSAM's Kronecker factors every k micro-batches."})
     # W&B, applied through the WANDB_* variables that HF's WandbCallback reads.
     wandb_project: Optional[str] = field(default="covft")
     wandb_entity: Optional[str] = None

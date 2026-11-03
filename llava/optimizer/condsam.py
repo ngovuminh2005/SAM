@@ -14,20 +14,27 @@ from .sam import SAM
 class CondSAM(SAM):
     STATS_CHUNK_BYTES = 256 * 1024**2
 
-    def __init__(self, params, rho=0.05, beta=0.95, eps=1e-8, power_iters=1):
+    def __init__(self, params, rho=0.05, beta=0.95, eps=1e-8, power_iters=1, update_interval=1):
         super().__init__(params, rho=rho, eps=eps)
         if not math.isfinite(beta) or not 0 <= beta < 1:
             raise ValueError('CondSAM beta must be in [0, 1)')
         self._validate_power_iters(power_iters)
-        self.options.update(beta=beta, power_iters=power_iters)
+        self._validate_positive_int(update_interval, 'update_interval')
+        self.options.update(beta=beta, power_iters=power_iters, update_interval=update_interval)
         self._distributed = False
         self._process_group = None
         self._stats_buffers = {}
+        self._observe_calls = 0
+        self._layer_cache = None
 
     @staticmethod
-    def _validate_power_iters(value):
+    def _validate_positive_int(value, name):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            raise ValueError('CondSAM power_iters must be a positive integer')
+            raise ValueError(f'CondSAM {name} must be a positive integer')
+
+    @classmethod
+    def _validate_power_iters(cls, value):
+        cls._validate_positive_int(value, 'power_iters')
 
     @staticmethod
     def _matrix_shape(p):
@@ -45,21 +52,38 @@ class CondSAM(SAM):
             raise FloatingPointError(f'CondSAM non-finite {name}')
 
     @staticmethod
-    def _outer_sum(rows, out=None):
+    def _outer_sum(rows, out=None, alpha=1.0, exact_in_tf32=False):
+        """out += alpha * rows^T rows, accumulated in fp32.
+
+        exact_in_tf32: the rows hold bf16/fp16 values, which TF32 represents exactly, so the
+        products run on TF32 tensor cores without rounding (sums stay fp32), whatever the
+        global torch.backends.cuda.matmul.allow_tf32 says.
+        """
         result = out if out is not None else rows.new_zeros((rows.shape[-1], rows.shape[-1]), dtype=torch.float32)
-        for chunk in rows.split(262144):
-            chunk = chunk.float()
-            result.addmm_(chunk.T, chunk)
+        tf32 = exact_in_tf32 and rows.is_cuda
+        previous = torch.backends.cuda.matmul.allow_tf32
+        if tf32:
+            torch.backends.cuda.matmul.allow_tf32 = True
+        try:
+            for chunk in rows.split(262144):
+                chunk = chunk.float()
+                result.addmm_(chunk.T, chunk, alpha=alpha)
+        finally:
+            if tf32:
+                torch.backends.cuda.matmul.allow_tf32 = previous
         return result
 
     @torch.no_grad()
     def _accumulate(self, module, activation, grad, batch_size, observation):
         a_sum, b_sum, count = observation
+        low_precision = (torch.bfloat16, torch.float16)
+        a_low, b_low = activation.dtype in low_precision, grad.dtype in low_precision
         if isinstance(module, torch.nn.Linear):
             a = activation.reshape(-1, activation.shape[-1])
-            b = grad.reshape(-1, grad.shape[-1]).float() * batch_size
-            self._outer_sum(a, out=a_sum)
-            self._outer_sum(b, out=b_sum)
+            b = grad.reshape(-1, grad.shape[-1])
+            self._outer_sum(a, out=a_sum, exact_in_tf32=a_low)
+            # (batch_size * g)^T (batch_size * g), scaled after the product so g stays exact.
+            self._outer_sum(b, out=b_sum, alpha=batch_size ** 2, exact_in_tf32=b_low)
             count.add_(a.shape[0])
             return
         # Target ~256 MiB of patch/derivative data per chunk; reshape can copy.
@@ -87,9 +111,9 @@ class CondSAM(SAM):
             patches = patches.unfold(3, dilation_w * (kernel_w - 1) + 1, module.stride[1])
             patches = patches[..., ::dilation_h, ::dilation_w]
             a = patches.permute(0, 2, 3, 1, 4, 5).reshape(-1, a_sum.shape[0])
-            b = derivative.flatten(2).transpose(1, 2).reshape(-1, b_sum.shape[0]).float() * batch_size
-            self._outer_sum(a, out=a_sum)
-            self._outer_sum(b, out=b_sum)
+            b = derivative.flatten(2).transpose(1, 2).reshape(-1, b_sum.shape[0])
+            self._outer_sum(a, out=a_sum, exact_in_tf32=a_low)
+            self._outer_sum(b, out=b_sum, alpha=batch_size ** 2, exact_in_tf32=b_low)
             count.add_(a.shape[0])
 
     def _layers(self, model):
@@ -107,9 +131,11 @@ class CondSAM(SAM):
     @torch.no_grad()
     def _update_factors(self, observations):
         if self._distributed:
-            for values in observations.values():
-                for value in values:
-                    dist.all_reduce(value, group=self._process_group)
+            # Issued together so NCCL overlaps them; one blocking call per tensor was serial.
+            works = [dist.all_reduce(value, group=self._process_group, async_op=True)
+                     for values in observations.values() for value in values]
+            for work in works:
+                work.wait()
         self._finite_many([value for values in observations.values() for value in values], 'factor statistics')
         power_values = []
         for p, (a_sum, b_sum, count) in observations.items():
@@ -168,9 +194,16 @@ class CondSAM(SAM):
         Unsupported/functional layers have no factors and retain the SAM direction.
         `distributed=True` all-reduces the factors over the default process group
         for wrappers that are not DDP (e.g. a DeepSpeed engine's inner module).
+        With update_interval k only every k-th call collects statistics and updates
+        the factors (K-FAC style); the others reuse the current factors.
         """
         if batch_size <= 0:
             raise ValueError('batch_size must be positive')
+        collect = self._observe_calls % self.options.get('update_interval', 1) == 0
+        self._observe_calls += 1
+        if not collect:
+            yield
+            return
         is_ddp = isinstance(model, torch.nn.parallel.DistributedDataParallel)
         self._process_group = model.process_group if is_ddp else None
         if distributed is None:
@@ -179,7 +212,10 @@ class CondSAM(SAM):
             dist.get_world_size(self._process_group) > 1
         handles, observations = [], {}
         lock = threading.Lock()
-        layers = self._layers(model)
+        # The module tree does not change during training; walking a 7B model per call is slow.
+        if self._layer_cache is None or self._layer_cache[0] is not model:
+            self._layer_cache = (model, self._layers(model))
+        layers = self._layer_cache[1]
         for buffers in self._stats_buffers.values():
             for value in buffers:
                 value.zero_()
@@ -222,17 +258,22 @@ class CondSAM(SAM):
                 handle.remove()
         pooled = {}
         # Keep the parameter order identical on every DDP worker, even if a
-        # layer was unused locally. DataParallel replica statistics sum here.
+        # layer was unused locally. The statistics on the parameter's own device
+        # are the pooled ones (zeroed above); DataParallel replicas add into them.
         for p, _ in layers:
-            out_dim, in_dim = self._matrix_shape(p)
-            pooled[p] = (
-                torch.zeros(in_dim, in_dim, device=p.device, dtype=torch.float32),
-                torch.zeros(out_dim, out_dim, device=p.device, dtype=torch.float32),
-                torch.zeros((), device=p.device, dtype=torch.float64),
-            )
-        for (p, _), buffers in observations.items():
-            for total, value in zip(pooled[p], buffers):
-                total.add_(value.to(p.device))
+            key = (p, p.device)
+            if key not in self._stats_buffers:
+                out_dim, in_dim = self._matrix_shape(p)
+                self._stats_buffers[key] = (
+                    torch.zeros(in_dim, in_dim, device=p.device, dtype=torch.float32),
+                    torch.zeros(out_dim, out_dim, device=p.device, dtype=torch.float32),
+                    torch.zeros((), device=p.device, dtype=torch.float64),
+                )
+            pooled[p] = self._stats_buffers[key]
+        for (p, device), buffers in observations.items():
+            if device != p.device:
+                for total, value in zip(pooled[p], buffers):
+                    total.add_(value.to(p.device))
         self._update_factors(pooled)
 
     def _directions(self):

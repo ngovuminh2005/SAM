@@ -124,6 +124,7 @@ FRIENDLYSAM_LAMBDAS=(0.9)
 FISHERSAM_ETAS=(1.0)
 CONDSAM_BETAS=(0.95)
 CONDSAM_POWER_ITERS=(1)
+CONDSAM_UPDATE_INTERVALS=(1)   # update the Kronecker factors every k micro-batches (16 = once per step)
 
 SEEDS=(42)
 ```
