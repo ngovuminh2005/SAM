@@ -117,6 +117,20 @@ bash scripts/train_rn50.sh               # run
 Arguments after the script name are passed to every run, e.g. `bash scripts/train_rn50.sh --wandb.mode=disabled`.
 On one H100, ResNet-50 + SAM trains at ~3.2k img/s at 160 px (~7 min per epoch), measured with `1.0` data in RAM.
 
+### Multi-GPU (DDP)
+
+> **Note:** all training so far used one GPU. Multi-GPU runs have only been checked with CPU unit tests, not on real
+> GPUs, so DDP behaviour, speed and accuracy are unverified.
+
+With `GPUS_PER_NODE > 1`, each GPU computes the SAM perturbation from its own batch, and only the descent gradient is
+averaged, as in the SAM paper (m-sharpness with `m` = per-GPU batch, the same as on one GPU). CondSAM then keeps its
+Kronecker statistics per GPU. `--sam.local_perturbation=0` instead perturbs every GPU with the all-reduced gradient
+(`m` = global batch). DDP is single-node only.
+
+```bash
+python -m unittest tests.test_ddp_sam      # 2-process gloo checks on CPU, ~1 min
+```
+
 ### Outputs
 
 Each run writes `logs/<uuid>/` with `params.json`, a JSON-lines `log`, and `final_weights.pt`. W&B runs of one sweep

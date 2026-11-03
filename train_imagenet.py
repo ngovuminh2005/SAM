@@ -100,7 +100,9 @@ Section('sam', 'perturbation policy, independent of the base optimizer').params(
     fishersam_eta=Param(float, 'FisherSAM eta', default=1.0),
     condsam_beta=Param(float, 'CondSAM factor EMA beta', default=0.95),
     condsam_eps=Param(float, 'CondSAM eps', default=1e-8),
-    condsam_power_iters=Param(int, 'CondSAM power iterations', default=1)
+    condsam_power_iters=Param(int, 'CondSAM power iterations', default=1),
+    local_perturbation=Param(int, 'under DDP, perturb each rank with its own batch gradient '
+                             '(SAM paper m-sharpness) instead of the all-reduced one (1/0)', default=1)
 )
 
 Section('wandb', 'Weights & Biases tracking').params(
@@ -280,10 +282,12 @@ class ImageNetTrainer:
     @param('sam.condsam_beta')
     @param('sam.condsam_eps')
     @param('sam.condsam_power_iters')
+    @param('sam.local_perturbation')
     @param('training.precision')
     def create_policy(self, method, rho, include, exclude, friendlysam_sigma,
                       friendlysam_lambda, fishersam_eta, condsam_beta,
-                      condsam_eps, condsam_power_iters, precision):
+                      condsam_eps, condsam_power_iters, local_perturbation, precision):
+        self.local_perturbation = bool(local_perturbation)
         if method == 'none':
             return None
         # GradScaler would scale the first-pass gradients (and CondSAM's
@@ -467,14 +471,33 @@ class ImageNetTrainer:
 
         return model, scaler
 
+    def all_ranks(self, flag):
+        value = ch.tensor(int(flag), device=next(self.model.parameters()).device)
+        dist.all_reduce(value, op=dist.ReduceOp.MIN)
+        return bool(value.item())
+
+    def average_gradients(self):
+        """What DDP's backward would have done for the no_sync first pass."""
+        world_size = dist.get_world_size()
+        for p in self.model.parameters():
+            if p.grad is not None:
+                dist.all_reduce(p.grad)
+                p.grad.div_(world_size)
+
     def train_step(self, images, target):
         policy = self.policy
         use_sam = policy is not None and policy.options['rho'] > 0
+        # SAM paper (m-sharpness): under DDP each rank perturbs with its own
+        # batch gradient, and only the descent gradient is averaged.
+        local = (use_sam and self.local_perturbation and
+                 isinstance(self.model, ch.nn.parallel.DistributedDataParallel))
 
         self.optimizer.zero_grad(set_to_none=True)
-        # CondSAM hooks the first pass to collect its Kronecker factors
-        observation = policy.observe(self.model, target.shape[0]) if use_sam else nullcontext()
-        with observation:
+        # CondSAM hooks the first pass to collect its Kronecker factors; the
+        # unwrapped module keeps them per rank in local mode.
+        observed = self.model.module if local else self.model
+        observation = policy.observe(observed, target.shape[0]) if use_sam else nullcontext()
+        with observation, self.model.no_sync() if local else nullcontext():
             with autocast(dtype=self.amp_dtype):
                 output = self.model(images)
                 loss_train = self.loss(output, target)
@@ -482,6 +505,9 @@ class ImageNetTrainer:
 
         if use_sam:
             deltas = policy.perturbations()
+            # Every rank must take the second (all-reducing) pass, or none
+            if local and not self.all_ranks(bool(deltas)):
+                deltas = {}
             if deltas:
                 # Descend with the gradient taken at the perturbed weights
                 self.optimizer.zero_grad(set_to_none=True)
@@ -489,6 +515,8 @@ class ImageNetTrainer:
                     with autocast(dtype=self.amp_dtype):
                         loss_perturbed = self.loss(self.model(images), target)
                     loss_perturbed.backward()
+            elif local:
+                self.average_gradients()
 
         if self.grad_clip > 0:
             self.scaler.unscale_(self.optimizer)
