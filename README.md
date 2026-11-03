@@ -89,7 +89,7 @@ GPUS_PER_NODE=1              # GPU processes on this node; > 1 enables DDP
 GPU_IDS=(0)                  # which GPUs, e.g. (0 1 2 3); one id per process
 
 EPOCHS=(88)                  # any; 16 24 32 40 56 88 reproduce rn50_configs/ exactly
-METHODS=(sam condsam)        # sam asam condsam friendlysam fishersam mongesam no_sam
+METHODS=(condsam)            # sam asam condsam friendlysam fishersam mongesam no_sam
 RHOS=(0.01 0.05 0.1 0.5 1)   # perturbation radius (not used by no_sam)
 
 # Only used by the matching method:
@@ -103,8 +103,9 @@ CONDSAM_STATS_EVERY=(1)      # refresh factors every N steps; >1 is faster, 1 is
 SEEDS=(42)
 ```
 
-Every combination runs in turn, methods innermost: the example runs 10 jobs (`sam`, `condsam` at rho 0.01, then
-both at 0.05, and so on; CondSAM with beta 0.99 and 5 power iterations). `no_sam` runs once, first. `GPU_IDS` must list
+Every combination runs in turn, methods innermost: the example runs 5 CondSAM jobs, one per rho (beta 0.99, 5 power
+iterations); with several methods, e.g. `METHODS=(sam condsam)`, every method runs at each rho before the next.
+`no_sam` runs once, first. `GPU_IDS` must list
 `GPUS_PER_NODE` ids (DDP is single-node). Fixed settings (per-GPU batch 512, data paths,
 `WANDB_PROJECT=ffcv-imagenet`) are in the `FIXED` block below; loader workers default to all CPUs but two,
 split across the GPUs (`NUM_WORKERS=auto`). The learning rate follows the original 8-GPU recipe
