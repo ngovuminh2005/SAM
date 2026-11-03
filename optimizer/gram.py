@@ -120,11 +120,12 @@ def gram_accumulate(rows, out, alpha=1., use_triton=True):
 
 if triton is not None:
     @triton.jit
-    def _normalize_kernel(x_ptr, v_ptr, norm_ptr, active_ptr, n, BLOCK: tl.constexpr):
+    def _normalize_kernel(x_ptr, v_ptr, norm_ptr, active_ptr, n, dim, BLOCK: tl.constexpr):
         offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
         mask = offs < n
-        norm = tl.load(norm_ptr)
-        take = (tl.load(active_ptr) != 0) & (norm > 0)
+        row = offs // dim
+        norm = tl.load(norm_ptr + row, mask=mask, other=0.)
+        take = (tl.load(active_ptr + row, mask=mask, other=0) != 0) & (norm > 0)
         v = tl.load(v_ptr + offs, mask=mask)
         x = tl.load(x_ptr + offs, mask=mask)
         # Division in float64, rounded once to float32, as in the torch version
@@ -135,12 +136,14 @@ if triton is not None:
 def normalize_into(x, v, norm, active):
     """x = (v / norm) where active and norm > 0, else x; in place, one kernel on CUDA.
 
-    norm is the float64 norm of the float32 vector v, so a positive norm is never
-    below float64's tiny and the torch version's clamp_min never applies.
+    x and v are (d,) or a batch (k, d) of float32 vectors, with norm and active
+    of shape () or (k,). norm is the float64 norm of v, so a positive norm is
+    never below float64's tiny and the torch version's clamp_min never applies.
     """
     if triton is not None and x.is_cuda and x.is_contiguous() and v.is_contiguous():
         n = x.numel()
-        _normalize_kernel[(triton.cdiv(n, 1024),)](x, v, norm, active, n, BLOCK=1024)
+        _normalize_kernel[(triton.cdiv(n, 1024),)](x, v, norm, active, n, x.shape[-1], BLOCK=1024)
         return x
+    norm, active = norm.unsqueeze(-1), active.unsqueeze(-1)
     candidate = (v.double() / norm.clamp_min(torch.finfo(torch.float64).tiny)).float()
     return x.copy_(torch.where(active & (norm > 0), candidate, x))

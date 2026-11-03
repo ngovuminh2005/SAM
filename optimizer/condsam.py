@@ -35,6 +35,7 @@ class CondSAM(SAM):
         self._perturb_graph = None
         self._grad_source = None
         self._warned_unobserved = False
+        self._group_plan = None
         self._side_streams = {}
 
     @staticmethod
@@ -149,7 +150,7 @@ class CondSAM(SAM):
             for p, values in fresh.items():
                 self._init_state(p, self.state[p], values[0].shape[0], values[1].shape[0])
             # First update runs eagerly; it also warms up cuBLAS for capture
-            self._finite_many(self._ema_and_power(fresh), 'power iteration')
+            self._finite_many(self._ema_and_power(fresh)[1], 'power iteration')
         if not ready:
             return
         if self._graph_ready(ready):
@@ -163,7 +164,7 @@ class CondSAM(SAM):
                 raise FloatingPointError('CondSAM non-finite power iteration')
         else:
             self._finite_many([t for values in ready.values() for t in values], 'factor statistics')
-            self._finite_many(self._ema_and_power(ready), 'power iteration')
+            self._finite_many(self._ema_and_power(ready)[1], 'power iteration')
 
     def _init_state(self, p, state, in_dim, out_dim):
         state['A'] = torch.eye(in_dim, device=p.device, dtype=torch.float32)
@@ -185,26 +186,98 @@ class CondSAM(SAM):
         state['spectral'].copy_((x @ a @ x) * (y @ b @ y))
         state['ab'].copy_(a.square().sum() * b.square().sum())
 
+    def _groups(self, observations):
+        """Stack the factors of equal size into (k, d, d) tensors, with their power
+        vectors (k, d), and keep each layer's state as views into them, so that a
+        whole group's power iteration is one bmm. The per-layer direction terms
+        become views of one vector per device. Rebuilt when the layers or their
+        state tensors change (first update, a new layer, load_state_dict)."""
+        params = tuple(observations)
+        plan = self._group_plan
+        if (plan is not None and plan['params'] == params
+                and all(self.state[p][k] is view for p, k, view in plan['views'])):
+            return plan
+        views, groups, devices = [], [], {}
+        for i, p in enumerate(params):
+            devices.setdefault(p.device, []).append(i)
+        for matrix, vector in (('A', 'x'), ('B', 'y')):
+            by_shape = {}
+            for i, p in enumerate(params):
+                by_shape.setdefault((p.device, self.state[p][matrix].shape[0]), []).append(i)
+            for (device, _), members in by_shape.items():
+                stacked = torch.stack([self.state[params[i]][matrix] for i in members])
+                vectors = torch.stack([self.state[params[i]][vector] for i in members])
+                for k, i in enumerate(members):
+                    state = self.state[params[i]]
+                    state[matrix], state[vector] = stacked[k], vectors[k]
+                    views += [(params[i], matrix, state[matrix]), (params[i], vector, state[vector])]
+                groups.append(dict(matrix=matrix, device=device, stacked=stacked, vectors=vectors,
+                                   members=torch.tensor(members, device=device)))
+        terms = {}
+        for device, members in devices.items():
+            spectral = torch.stack([self.state[params[i]]['spectral'] for i in members])
+            ab = torch.stack([self.state[params[i]]['ab'] for i in members])
+            for k, i in enumerate(members):
+                state = self.state[params[i]]
+                state['spectral'], state['ab'] = spectral[k], ab[k]
+                views += [(params[i], 'spectral', state['spectral']), (params[i], 'ab', state['ab'])]
+            # Position of each layer within its device's vectors
+            slot = torch.full((len(params),), -1, dtype=torch.long)
+            slot[members] = torch.arange(len(members))
+            terms[device] = dict(spectral=spectral, ab=ab, members=torch.tensor(members, device=device),
+                                 member_list=members, slot=slot.to(device), slot_list=slot.tolist())
+        self._group_plan = plan = dict(params=params, views=views, groups=groups, terms=terms)
+        return plan
+
     def _ema_and_power(self, observations):
-        """EMA of the factors and power iteration, in place; returns the vector norms."""
+        """EMA of the factors and power iteration, in place. Returns (‖A‖², ‖B‖²
+        per layer, power-iteration norms): a non-finite statistic reaches the
+        factor through the EMA and so its squared norm."""
         beta, power_iters = self.options['beta'], self.options['power_iters']
-        norms = []
-        for p, (a_sum, b_sum, count) in observations.items():
-            state = self.state[p]
-            active = count > 0
-            weight = active.float() * (1 - beta)
+        plan = self._groups(observations)
+        values = list(observations.values())
+        counts = {}
+        for device, term in plan['terms'].items():
+            count = torch.stack([values[i][2] for i in term['member_list']])
+            counts[device] = (count > 0, count.clamp_min(1))
+        for i, (a_sum, b_sum, _) in enumerate(values):
+            device = plan['params'][i].device
+            active, denominator = counts[device]
+            slot = plan['terms'][device]['slot_list'][i]
+            weight = active[slot].float() * (1 - beta)
+            state = self.state[plan['params'][i]]
             for key, total in [('A', a_sum), ('B', b_sum)]:
                 # In place: the sums are zeroed before the next collection
-                state[key].lerp_(total.div_(count.clamp_min(1)), weight)
-            for matrix, vector in [('A', 'x'), ('B', 'y')]:
-                for _ in range(power_iters):
-                    v = state[matrix] @ state[vector]
-                    norm = torch.linalg.vector_norm(v, dtype=torch.float64)
-                    # A float32 vector is finite iff its float64 norm is
-                    norms.append(norm)
-                    normalize_into(state[vector], v, norm, active)
-            self._refresh_terms(state)
-        return norms
+                state[key].lerp_(total.div_(denominator[slot]), weight)
+        norms, quadratic, squares = [], {}, {}
+        for group in plan['groups']:
+            stacked, vectors = group['stacked'], group['vectors']
+            active = counts[group['device']][0][plan['terms'][group['device']]['slot'][group['members']]]
+            for _ in range(power_iters):
+                v = torch.bmm(stacked, vectors.unsqueeze(-1)).squeeze(-1)
+                norm = torch.linalg.vector_norm(v, dim=1, dtype=torch.float64)
+                # A float32 vector is finite iff its float64 norm is
+                norms.append(norm)
+                normalize_into(vectors, v, norm, active)
+            # xᵀAx and ‖A‖² of every layer in the group
+            quadratic[id(group)] = (torch.bmm(stacked, vectors.unsqueeze(-1)).squeeze(-1) * vectors).sum(1)
+            squares[id(group)] = stacked.square().sum((1, 2))
+        checks = []
+        for device, term in plan['terms'].items():
+            per_layer = {}
+            for key in ('A', 'B'):
+                q = torch.empty(len(plan['params']), device=device)
+                sq = torch.empty(len(plan['params']), device=device)
+                for group in plan['groups']:
+                    if group['matrix'] == key and group['device'] == device:
+                        q[group['members']] = quadratic[id(group)]
+                        sq[group['members']] = squares[id(group)]
+                per_layer[key] = (q[term['members']], sq[term['members']])
+            (qa, sa), (qb, sb) = per_layer['A'], per_layer['B']
+            term['spectral'].copy_(qa * qb)
+            term['ab'].copy_(sa * sb)
+            checks += [sa, sb]
+        return checks, norms
 
     def _graph_ready(self, observations):
         return self.CUDA_GRAPHS and all(t.is_cuda for values in observations.values() for t in values)
@@ -213,6 +286,7 @@ class CondSAM(SAM):
         """Replay the checks and the update as one CUDA graph: the same kernels in
         the same order, without thousands of small launches. Recaptured if any
         tensor changes. Returns (statistics invalid, power iteration invalid)."""
+        self._groups(observations)
         tensors = [t for p, values in observations.items()
                    for t in (*values, *(self.state[p][k] for k in ('A', 'B', 'x', 'y', 'spectral', 'ab')))]
         key = (tuple(t.data_ptr() for t in tensors), self.options['beta'], self.options['power_iters'])
@@ -221,8 +295,9 @@ class CondSAM(SAM):
             # Capture records without running; the replay below does the update once.
             # thread_local: data-loader threads may keep using CUDA meanwhile.
             with torch.cuda.graph(graph, capture_error_mode="thread_local"):
-                stats_invalid = self._invalid([t for values in observations.values() for t in values])
-                power_invalid = self._invalid(self._ema_and_power(observations))
+                checks, norms = self._ema_and_power(observations)
+                stats_invalid = (~torch.isfinite(torch.cat(checks))).any().to(torch.int32)
+                power_invalid = (~torch.isfinite(torch.cat(norms))).any().to(torch.int32)
             self._update_graph = (key, graph, (stats_invalid, power_invalid))
         _, graph, flags = self._update_graph
         graph.replay()
@@ -412,12 +487,26 @@ class CondSAM(SAM):
         return {p: self._direction(g, self.state[p], self.options['eps'])
                 for p, g in self._gradients().items()}
 
+    def state_dict(self):
+        # Per-layer copies: the state tensors are views into shared group tensors
+        checkpoint = super().state_dict() if not self.state else None
+        if checkpoint is not None:
+            return checkpoint
+        return {
+            'policy': type(self).__name__,
+            'options': dict(self.options),
+            'shapes': [tuple(p.shape) for p in self.params],
+            'state': [{k: v.detach().clone() if torch.is_tensor(v) else v
+                       for k, v in self.state[p].items()} for p in self.params],
+        }
+
     def load_state_dict(self, checkpoint):
         super().load_state_dict(checkpoint)
         self._validate_power_iters(self.options['power_iters'])
         self._stats_buffers.clear()
         self._update_graph = None
         self._perturb_graph = None
+        self._group_plan = None
         for p in self.params:
             state = self.state[p]
             if 'A' in state and 'spectral' not in state:   # checkpoint from before the cache

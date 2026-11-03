@@ -74,6 +74,31 @@ def observe_once(model, policy, x, y):
     return policy.perturbations()
 
 
+class CondSAMStateTest(unittest.TestCase):
+    def test_checkpoint_round_trip_with_grouped_factors(self):
+        torch.manual_seed(0)
+        model = torch.nn.Sequential(torch.nn.Conv2d(3, 4, 3, padding=1), torch.nn.ReLU(),
+                                    torch.nn.Conv2d(4, 4, 3, padding=1), torch.nn.Flatten(),
+                                    torch.nn.Linear(4 * 6 * 6, 5))
+        x, y = torch.randn(8, 3, 6, 6), torch.randint(0, 5, (8,))
+        policy = CondSAM(list(model.parameters()), rho=0.05, beta=0.9, power_iters=2)
+        for _ in range(2):
+            observe_once(model, policy, x, y)
+        checkpoint = policy.state_dict()
+        for p, state in zip(model.parameters(), checkpoint['state']):
+            for k, v in state.items():
+                if torch.is_tensor(v):   # a per-layer copy, not the shared group tensor
+                    self.assertEqual(v.untyped_storage().nbytes(), v.numel() * v.element_size(), k)
+        restored = CondSAM(list(model.parameters()), rho=0.05, beta=0.9, power_iters=2)
+        restored.load_state_dict(checkpoint)
+        torch.manual_seed(5)
+        expected = observe_once(model, policy, x, y)
+        torch.manual_seed(5)
+        got = observe_once(model, restored, x, y)
+        for p in model.parameters():
+            torch.testing.assert_close(got[p], expected[p], rtol=0, atol=0)
+
+
 class CondSAMHooksTest(unittest.TestCase):
     def test_blurpool_layers_are_conditioned(self):
         from train_imagenet import BlurPoolConv2d
