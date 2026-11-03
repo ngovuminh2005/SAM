@@ -118,8 +118,9 @@ bash scripts/train_rn50.sh               # run
 
 Arguments after the script name are passed to every run, e.g. `bash scripts/train_rn50.sh --wandb.mode=disabled`.
 On one H100 at 160 px with `1.0` data in RAM, ResNet-50 trains at ~3.2k img/s with SAM (~7 min per epoch) and
-~1.5k img/s with CondSAM (5 power iterations). `CONDSAM_STATS_EVERY=10` refreshes the Kronecker factors every 10
-steps, as K-FAC does, for ~2.5k img/s; `1` keeps the exact per-step update.
+~2.35k img/s with CondSAM (5 power iterations, exact per-step factors). CondSAM's factor sums run in a fused Triton
+kernel on a second CUDA stream, and its update and perturbation as CUDA graphs. `CONDSAM_STATS_EVERY=N > 1` refreshes
+the factors only every N steps, as K-FAC does; this changes the algorithm.
 
 ### Multi-GPU (DDP)
 
@@ -133,6 +134,7 @@ Kronecker statistics per GPU. `--sam.local_perturbation=0` instead perturbs ever
 
 ```bash
 python -m unittest tests.test_ddp_sam tests.test_condsam    # CPU checks, ~1 min
+CONDSAM_GPU_TESTS=1 python -m unittest tests.test_condsam   # also the CUDA paths
 ```
 
 ### Outputs

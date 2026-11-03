@@ -174,7 +174,7 @@ class BlurPoolConv2d(ch.nn.Module):
     def forward(self, x):
         blurred = F.conv2d(x, self.blur_filter, stride=1, padding=(1, 1),
                            groups=self.conv.in_channels, bias=None)
-        return self.conv.forward(blurred)
+        return self.conv(blurred)   # through __call__, so module hooks (CondSAM) run
 
 class ImageNetTrainer:
     @param('training.distributed')
