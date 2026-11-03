@@ -44,29 +44,27 @@ skipped.
 
 ```bash
 mkdir -p data
-IMAGENET_DIR=$PWD/imagenet WRITE_DIR=$PWD/data ./write_imagenet.sh 500 1.0 90
+IMAGENET_DIR=$PWD/imagenet WRITE_DIR=$PWD/data ./write_imagenet.sh 500 0.50 90
 ```
 
-Arguments are `<max side length> <JPEG fraction> <JPEG quality>`. This writes `data/train_500_1.0_90.ffcv`
-(68.5 GB) and `data/val_500_1.0_90.ffcv` (3.1 GB) in ~7 minutes on 20 CPUs. Images are resized to a longer side of
-at most 500 px and all are stored as quality-90 JPEG.
+Arguments are `<max side length> <JPEG fraction> <JPEG quality>`. Images are resized to a longer side of at most
+500 px; each is stored as a quality-90 JPEG with probability `<JPEG fraction>` and as raw pixels otherwise (~550 KB
+each, about 10x a JPEG). This is the original ffcv-imagenet ResNet-50 setting and writes
+`data/{train,val}_500_0.50_90.ffcv`.
 
-Each image goes through JPEG with probability `<JPEG fraction>`; the rest are stored as raw pixels
-(~550 KB each at 500 px, about 10x a quality-90 JPEG).
+| Setting | Train file | `IN_MEMORY` | Notes |
+|---|---|---|---|
+| `500 0.50 90` | ~360–390 GB (estimated) | `0` (larger than RAM) | default; half the images are not re-compressed |
+| `500 1.0 90` | 68.5 GB (measured) | `1` | optional; every image re-compressed as JPEG, fits in RAM, ~7 min to write on 20 CPUs |
 
-| Setting | Train file | Notes |
-|---|---|---|
-| `500 1.0 90` | 68.5 GB (measured) | used here; fits in RAM for `IN_MEMORY=1` |
-| `500 0.50 90` | ~360–390 GB (estimated from a 20k-image subset) | original ResNet-50 setting |
-| `400 0.10 90` | larger still (not measured) | original ResNet-18 setting |
+The launcher defaults to `DATA_TAG=500_0.50_90` and `IN_MEMORY=0`. To use `1.0`, write it with
+`./write_imagenet.sh 500 1.0 90` and set `DATA_TAG=500_1.0_90` and `IN_MEMORY=1` in
+[scripts/train_rn50.sh](scripts/train_rn50.sh). Use `IN_MEMORY=1` only when the train file fits in RAM.
 
-To train on another setting, set `DATA_TAG` in [scripts/train_rn50.sh](scripts/train_rn50.sh) (e.g. `500_0.50_90`)
-and `IN_MEMORY=0` if the train file does not fit in RAM. Converting needs the raw `imagenet/` folder (~146 GiB) and
-the output on disk at the same time: about 520 GB free for `500 0.50 90`.
-
-With 18 loader workers and the data in RAM, `1.0` and `0.50` load equally fast (~10.5k img/s for the ResNet-18
-pipeline on 20 CPUs); reading from disk with `IN_MEMORY=0` was not measured. The raw `imagenet/` folder is not used
-for training and can be deleted after conversion.
+Converting needs the raw `imagenet/` folder (~146 GiB) and the output on disk at the same time: about 520 GB free
+for `0.50`. The raw folder is not used for training and can be deleted afterwards. With 18 loader workers and the data
+in RAM, `1.0` and `0.50` load equally fast (~10.5k img/s for the ResNet-18 pipeline on 20 CPUs); reading `0.50` from
+disk with `IN_MEMORY=0` has not been benchmarked.
 
 ## Configure and run
 
@@ -102,7 +100,7 @@ bash scripts/train_rn50.sh               # run
 ```
 
 Arguments after the script name are passed to every run, e.g. `bash scripts/train_rn50.sh --wandb.mode=disabled`.
-On one H100, ResNet-50 + SAM trains at ~3.2k img/s at 160 px (~7 min per epoch).
+On one H100, ResNet-50 + SAM trains at ~3.2k img/s at 160 px (~7 min per epoch), measured with `1.0` data in RAM.
 
 ### Outputs
 
@@ -114,43 +112,3 @@ share a group and log:
 - `final/*` after training.
 
 Evaluation runs after every epoch on the full 50k validation set at 256 px with flip test-time augmentation.
-
-## Training recipe
-
-From ffcv-imagenet ([rn50_configs/](rn50_configs/)): SGD (momentum 0.9, weight decay 1e-4 except on parameters
-whose names contain `bn`), label smoothing 0.1, BlurPool, triangular LR (peak at epoch 2, zero at the last epoch), and
-progressive resizing 160 → 192 px late in training. The LR and resolution schedules stretch with `EPOCHS`, so every
-epoch count is a complete schedule; there is no early stopping.
-
-A SAM step does a forward/backward pass, perturbs the weights by the policy's δ, does a second forward/backward
-pass at `w + δ` (BatchNorm running statistics frozen), restores `w`, and steps SGD with that gradient. δ is
-normalized with one L2 norm over all perturbed parameters (all trainable parameters by default; filter with
-`--sam.include` / `--sam.exclude` regexes). CondSAM additionally conditions each `Conv2d`/`Linear` weight with
-Kronecker factors collected on the first pass. SAM policies run in bf16 autocast; the plain baseline uses fp16.
-
-A single run without the launcher stacks a policy config on a base config:
-
-```bash
-python train_imagenet.py -C rn50_configs/rn50_88_epochs.yaml -C sam_configs/sam.yaml \
-    --training.distributed=0 --dist.world_size=1 --lr.lr=0.2125 \
-    --data.train_dataset=data/train_500_1.0_90.ffcv --data.val_dataset=data/val_500_1.0_90.ffcv \
-    --data.num_workers=18 --data.in_memory=1 --logging.folder=logs --logging.log_level=1 \
-    --wandb.mode=online --wandb.project=ffcv-imagenet
-```
-
-## Credits
-
-Training script and configurations from [ffcv-imagenet](https://github.com/libffcv/ffcv-imagenet)
-(Apache-2.0, see [LICENSE](LICENSE)). If you use this setup, cite:
-
-```
-@misc{leclerc2022ffcv,
-    author = {Guillaume Leclerc and Andrew Ilyas and Logan Engstrom and Sung Min Park and Hadi Salman and Aleksander Madry},
-    title = {ffcv},
-    year = {2022},
-    howpublished = {\url{https://github.com/libffcv/ffcv/}}
-}
-```
-
-Perturbation policies are ported from the wise-ft project. The validation folder mapping is
-[`valprep.sh`](https://github.com/soumith/imagenetloader.torch) from soumith/imagenetloader.torch.

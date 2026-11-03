@@ -36,8 +36,8 @@ LR=$(awk -v b="${BATCH_SIZE}" -v n="${GPUS_PER_NODE}" 'BEGIN { print 1.7 * b * n
 # Loader workers per GPU process; 18 in total saturated this 20-CPU machine.
 NUM_WORKERS=$(( 18 / GPUS_PER_NODE > 0 ? 18 / GPUS_PER_NODE : 1 ))
 DATA_DIR="${PROJECT_ROOT}/data"
-DATA_TAG=500_1.0_90          # <max side>_<JPEG fraction>_<quality> from write_imagenet.sh
-IN_MEMORY=1                  # 1 only if the train file fits in RAM (500_0.50_90 does not)
+DATA_TAG=500_0.50_90         # <max side>_<JPEG fraction>_<quality>; optional: 500_1.0_90
+IN_MEMORY=0                  # 1 only if the train file fits in RAM (e.g. 500_1.0_90)
 LOG_DIR="${PROJECT_ROOT}/logs"
 WANDB_PROJECT=ffcv-imagenet
 WANDB_GROUP="rn50-$(date +%Y%m%d-%H%M%S)"     # all runs of this sweep share a group
