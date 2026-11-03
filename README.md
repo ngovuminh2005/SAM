@@ -102,8 +102,8 @@ CONDSAM_POWER_ITERS=(5)
 SEEDS=(42)
 ```
 
-Every combination runs in turn; the example runs 10 jobs (`sam` and `condsam`, each with five rho values; CondSAM with
-beta 0.99 and 5 power iterations). `GPU_IDS` must list
+Every combination runs in turn, methods innermost: the example runs 10 jobs (`sam`, `condsam` at rho 0.01, then
+both at 0.05, and so on; CondSAM with beta 0.99 and 5 power iterations). `no_sam` runs once, first. `GPU_IDS` must list
 `GPUS_PER_NODE` ids (DDP is single-node). Fixed settings (per-GPU batch 512, data paths,
 `WANDB_PROJECT=ffcv-imagenet`) are in the `FIXED` block below; loader workers default to all CPUs but two,
 split across the GPUs (`NUM_WORKERS=auto`). The learning rate follows the original 8-GPU recipe

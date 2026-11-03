@@ -95,18 +95,24 @@ method_variants() {
     esac
 }
 
+for method in "${METHODS[@]}"; do
+    [[ -f "sam_configs/${method}.yaml" ]] || { echo "Unknown method ${method}" >&2; exit 2; }
+done
+
+# Methods vary fastest, so each rho is compared across methods before moving on.
 runs=()
 for epochs in "${EPOCHS[@]}"; do
     [[ "${epochs}" =~ ^[1-9][0-9]*$ ]] || { echo "EPOCHS must be positive integers, got ${epochs}" >&2; exit 2; }
-    for method in "${METHODS[@]}"; do
-        [[ -f "sam_configs/${method}.yaml" ]] || { echo "Unknown method ${method}" >&2; exit 2; }
-        rhos=("${RHOS[@]}")
-        [[ "${method}" == no_sam ]] && rhos=(none)
-        for rho in "${rhos[@]}"; do
+    for i_rho in "${!RHOS[@]}"; do
+        for method in "${METHODS[@]}"; do
+            rho="${RHOS[$i_rho]}"
+            if [[ "${method}" == no_sam ]]; then
+                (( i_rho == 0 )) || continue    # no_sam ignores rho: run it once
+                rho=none
+            fi
             while IFS= read -r extra; do
                 for seed in "${SEEDS[@]}"; do
-                    args="${epochs}|${method}|${rho}|${seed}|${extra}"
-                    runs+=("${args}")
+                    runs+=("${epochs}|${method}|${rho}|${seed}|${extra}")
                 done
             done < <(method_variants "${method}")
         done
