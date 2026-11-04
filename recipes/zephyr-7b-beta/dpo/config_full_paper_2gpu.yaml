@@ -1,0 +1,64 @@
+# Paper setting (logits-SAM, ICLR 2026): Mistral-7B-v0.1 (zephyr-7b-sft-full) + UltraFeedback.
+# Paper: AdamW, global batch 128, lr 5e-7, beta 0.01 (Alignment Handbook), 1 epoch.
+# This file targets 2 GPUs: 4 samples/GPU x 2 GPUs x 16 grad-accum = 128 global batch.
+# Micro-batch 4 (not the Handbook's 8): plain DPO runs out of memory on 2x H100 80GB with 8,
+# as ZeRO-3 shards the optimizer over 2 GPUs instead of the paper's 4. The paper does not
+# give the Mistral micro-batch (it uses 4/GPU for Pythia). The SAM perturbation norm is
+# computed per micro-batch, so keep this value identical across the compared methods.
+
+# Model arguments
+model_name_or_path: alignment-handbook/zephyr-7b-sft-full
+torch_dtype: null
+attn_implementation: flash_attention_2
+
+# Data training arguments (same as the Alignment Handbook zephyr-7b-beta DPO recipe)
+dataset_mixture:
+  datasets:
+    - id: HuggingFaceH4/ultrafeedback_binarized
+      config: default
+      split: train_prefs
+      columns:
+        - chosen
+        - rejected
+      weight: 1.0
+    - id: HuggingFaceH4/ultrafeedback_binarized
+      config: default
+      split: test_prefs
+      columns:
+        - chosen
+        - rejected
+      weight: 1.0
+  test_split_size: 2000
+  seed: 0
+dataset_num_proc: 12
+
+# DPOTrainer arguments
+bf16: true
+beta: 0.01
+do_eval: true
+eval_strategy: steps
+eval_steps: 100
+gradient_accumulation_steps: 16
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: False
+learning_rate: 5.0e-7
+log_level: info
+logging_steps: 10
+lr_scheduler_type: cosine
+max_length: 1024
+max_prompt_length: 512
+num_train_epochs: 1
+optim: adamw_torch
+output_dir: data/mistral-7b-dpo-paper
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+push_to_hub: false
+report_to:
+  - tensorboard
+  - wandb
+save_strategy: "steps"
+save_steps: 100
+save_total_limit: 1
+seed: 42
+warmup_ratio: 0.1
