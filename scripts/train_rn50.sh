@@ -16,7 +16,7 @@ GPU_IDS=(0)                  # which GPUs, e.g. (0 1 2 3); one id per process
 
 # ============================== SWEEP =================================
 EPOCHS=(88)                  # any; 16 24 32 40 56 88 reproduce rn50_configs/ exactly
-METHODS=(condsam)            # sam asam condsam friendlysam fishersam mongesam no_sam
+METHODS=(sam condsam)            # sam asam condsam friendlysam fishersam mongesam no_sam
 RHOS=(0.01 0.05 0.1 0.5 1)   # perturbation radius (not used by no_sam)
 
 # Only used by the matching method:
