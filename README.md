@@ -162,3 +162,14 @@ bash scripts/train_rn50.sh --training.precision=fp16     # original precision
 Extra flags apply to every run in the sweep, and SAM policies require bf16, so use `--training.precision=fp16` only
 when `METHODS=(no_sam)`. To include the baseline in a SAM sweep instead, add it to the list, e.g.
 `METHODS=(no_sam sam condsam)`.
+
+## Additional run, 5/11/2026
+
+After running the settings above, run [scripts/run_baseline.sh](scripts/run_baseline.sh) in one go: it runs every
+SAM baseline this repo implements except CondSAM (`sam`, `asam`, `friendlysam`, `fishersam`, `mongesam`), back to
+back, each at one fixed rho (and method-specific setting):
+
+```bash
+scripts/run_baseline.sh                 # run all 5 baselines
+DRY_RUN=1 scripts/run_baseline.sh       # print the commands only
+```
