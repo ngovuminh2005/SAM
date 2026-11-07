@@ -213,3 +213,42 @@ class CondSAMGPUTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CondSAM1Test(unittest.TestCase):
+    def test_layers_share_rho_as_in_sam_with_condsam_directions(self):
+        from optimizer.condsam1 import CondSAM1
+        model, batches = model_and_batches(3)
+        policy = CondSAM1(list(model.parameters()), rho=0.7, beta=0.9, power_iters=3)
+        for x, y in batches:
+            model.zero_grad(set_to_none=True)
+            with policy.observe(model, x.shape[0]):
+                torch.nn.functional.cross_entropy(model(x), y).backward()
+            deltas = policy.perturbations()
+        grads = {p: p.grad for p in model.parameters()}
+        total = torch.sqrt(sum(g.square().sum() for g in grads.values()))
+        for p in model.parameters():
+            # SAM's share of rho per tensor...
+            torch.testing.assert_close(deltas[p].norm(), 0.7 * grads[p].norm() / total, rtol=1e-4, atol=0)
+        for p in (model[0].weight, model[3].weight):
+            # ...along CondSAM's direction (same factors and power vectors) inside each layer
+            original = CondSAM._direction(grads[p], policy.state[p], policy.options['eps'])
+            cosine = torch.nn.functional.cosine_similarity(deltas[p].flatten(), original.flatten(), 0)
+            torch.testing.assert_close(cosine, torch.tensor(1.), rtol=0, atol=1e-5)
+
+
+class CondSAM2Test(unittest.TestCase):
+    def test_adds_sam_perturbation_to_condsam1(self):
+        from optimizer.condsam2 import CondSAM2
+        model, batches = model_and_batches(3)
+        policy = CondSAM2(list(model.parameters()), rho=0.3, sam_rho=0.05, beta=0.9, power_iters=3)
+        for x, y in batches:
+            model.zero_grad(set_to_none=True)
+            with policy.observe(model, x.shape[0]):
+                torch.nn.functional.cross_entropy(model(x), y).backward()
+            deltas = policy.perturbations()
+        grads = {p: p.grad for p in model.parameters()}
+        total = torch.sqrt(sum(g.square().sum() for g in grads.values()))
+        condsam1 = CondSAM.perturbations.__get__(policy)()     # the CondSAM1 part alone
+        for p in model.parameters():
+            torch.testing.assert_close(deltas[p], condsam1[p] + 0.05 * grads[p] / total, rtol=1e-5, atol=1e-7)

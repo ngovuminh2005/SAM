@@ -173,3 +173,32 @@ back, each at one fixed rho (and method-specific setting):
 scripts/run_baseline.sh                 # run all 5 baselines
 DRY_RUN=1 scripts/run_baseline.sh       # print the commands only
 ```
+
+## OOD evaluation
+
+After training, [scripts/eval_ood.sh](scripts/eval_ood.sh) evaluates every finished run (`logs/*/final_weights.pt`) on
+the test sets of WiSE-FT: ImageNet (the run's validation `.ffcv` file), ImageNetV2, ImageNet-R, ImageNet-A and
+ImageNet-Sketch. ImageNet-R and ImageNet-A are restricted to their 200 classes.
+
+```bash
+scripts/eval_ood.sh                     # every finished run
+scripts/eval_ood.sh logs/<uuid> ...     # chosen runs
+```
+
+Set `GPU_ID` and `DATA_ROOT` at the top of the script. `DATA_ROOT` must contain `imagenetv2-matched-frequency-format-val`
+(10,000 images), `imagenet-r` (30,000), `imagenet-a` (7,500) and `sketch` (50,889). The script reports top-1 and top-5
+and writes `logs/<uuid>/ood_metrics.json`. All sets use the run's validation setting (center crop 224/256, 256 px, flip
+test-time augmentation). The OOD images are read from their original files, while ImageNet uses the re-encoded `.ffcv`
+file.
+
+## Additional run, 7/11/2026
+
+Run [scripts/run_condsam1.sh](scripts/run_condsam1.sh): a CondSAM1 sweep at rho 0.05, 0.1 and 0.5 (3 runs, beta 0.99,
+5 power iterations, otherwise the same settings as `scripts/train_rn50.sh`). CondSAM1 (`condsam1`) keeps CondSAM's
+direction inside each layer but rescales each layer to its gradient norm, so rho is split across layers as in SAM and
+the total perturbation norm equals rho. The original `condsam` is unchanged.
+
+```bash
+scripts/run_condsam1.sh                 # run the 3 CondSAM1 jobs
+DRY_RUN=1 scripts/run_condsam1.sh       # print the commands only
+```
