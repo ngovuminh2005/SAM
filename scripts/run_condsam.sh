@@ -18,7 +18,7 @@ GPU_IDS=(0)                  # which GPUs, e.g. (0 1 2 3); one id per process
 # ============================== SWEEP =================================
 EPOCHS=(88)                  # any; the ramp and LR schedule stretch with it
 METHODS=(condsam)
-RHOS=(0.1 0.5 1)            # perturbation radius
+RHOS=(0.1 0.15 0.5)          # perturbation radius
 
 # Only used by the matching method:
 FRIENDLYSAM_SIGMAS=(1.0)
