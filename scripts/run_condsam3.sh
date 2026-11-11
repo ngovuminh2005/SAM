@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ResNet-50 ImageNet: CondSAM3 sweep over rho 0.1 0.15 0.5 (one GPU or DDP), logged to W&B.
+# ResNet-50 ImageNet: CondSAM3 sweep over rho 0.05 0.1 0.15 0.5 (one GPU or DDP), logged to W&B.
 # CondSAM3 = CondSAM with a log knee: layers whose perturbation norm exceeds tau x the
 # median layer norm are log-compressed, all other layers are left exactly as in CondSAM.
 # Same settings as scripts/train_rn50.sh otherwise. Added 2026-11-11.
@@ -19,7 +19,7 @@ GPU_IDS=(0)                  # which GPUs, e.g. (0 1 2 3); one id per process
 # ============================== SWEEP =================================
 EPOCHS=(88)                  # any; 16 24 32 40 56 88 reproduce rn50_configs/ exactly
 METHODS=(condsam3)
-RHOS=(0.1 0.15 0.5)          # perturbation radius
+RHOS=(0.05 0.1 0.15 0.5)     # perturbation radius
 
 # Only used by the matching method:
 FRIENDLYSAM_SIGMAS=(1.0)
