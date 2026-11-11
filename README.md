@@ -205,11 +205,14 @@ DRY_RUN=1 scripts/run_condsam1.sh       # print the commands only
 
 ## Additional run, 11/11/2026
 
-Run [scripts/run_condsam3.sh](scripts/run_condsam3.sh): a CondSAM3 sweep at rho 0.1, 0.15 and 0.5 (3 runs, tau 10,
-beta 0.99, 5 power iterations, otherwise the same settings as `scripts/train_rn50.sh`). Branch:
-https://github.com/ngovuminh2005/SAM/tree/ffcv-imagenet
+Run both scripts below, one after the other. [scripts/run_condsam3.sh](scripts/run_condsam3.sh) tests a CondSAM
+variant (`condsam3`, rho 0.1, 0.15, 0.5); [scripts/run_condsam.sh](scripts/run_condsam.sh) reruns the original
+`condsam` (rho 0.1, 0.5, 1) with a training schedule of its own
+([rn50_configs/rn50_88_epochs_condsam.yaml](rn50_configs/rn50_88_epochs_condsam.yaml)). Both use 88 epochs and are
+otherwise the same as `scripts/train_rn50.sh`. Branch: https://github.com/ngovuminh2005/SAM/tree/ffcv-imagenet
 
 ```bash
-scripts/run_condsam3.sh                 # run the 3 CondSAM3 jobs
-DRY_RUN=1 scripts/run_condsam3.sh       # print the commands only
+scripts/run_condsam3.sh                 # 3 CondSAM3 jobs
+scripts/run_condsam.sh                  # 3 CondSAM jobs
+DRY_RUN=1 scripts/run_condsam.sh        # print the commands only (same for run_condsam3.sh)
 ```
