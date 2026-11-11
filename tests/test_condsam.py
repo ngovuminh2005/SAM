@@ -211,6 +211,62 @@ class CondSAMGPUTest(unittest.TestCase):
                 self.assertTrue(torch.equal(a[k], b[k]), k)
 
 
+def deep_model_and_batches(steps):
+    """Five conditioned layers, so the median layer norm is meaningful."""
+    torch.manual_seed(0)
+    model = torch.nn.Sequential(torch.nn.Conv2d(3, 6, 3, padding=1), torch.nn.ReLU(),
+                                torch.nn.Conv2d(6, 6, 3, padding=1), torch.nn.ReLU(), torch.nn.Flatten(),
+                                torch.nn.Linear(6 * 6 * 6, 16), torch.nn.ReLU(), torch.nn.Linear(16, 12),
+                                torch.nn.ReLU(), torch.nn.Linear(12, 5))
+    batches = [(torch.randn(8, 3, 6, 6), torch.randint(0, 5, (8,))) for _ in range(steps)]
+    return model, batches
+
+
+def run_policy(cls, steps=3, **options):
+    model, batches = deep_model_and_batches(steps)
+    policy = cls(list(model.parameters()), rho=0.2, beta=0.9, power_iters=3, **options)
+    for x, y in batches:
+        model.zero_grad(set_to_none=True)
+        with policy.observe(model, x.shape[0]):
+            torch.nn.functional.cross_entropy(model(x), y).backward()
+        deltas = policy.perturbations()
+    return model, policy, deltas
+
+
+class CondSAM3Test(unittest.TestCase):
+    def test_knee_scales_only_outlier_layers(self):
+        from optimizer.condsam3 import CondSAM3
+        tau = 1.0
+        model, policy, deltas = run_policy(CondSAM3, tau=tau)
+        # CondSAM's per-layer directions from the same factors and gradients
+        base = {p: CondSAM._direction(p.grad, policy.state[p], policy.options['eps']) for p in model.parameters()}
+        conditioned = [p for p in base if 'A' in policy.state[p]]
+        norms = torch.stack([base[p].norm() for p in conditioned])
+        ratio = dict(zip(conditioned, norms / norms.median()))
+        self.assertTrue(any(r > tau for r in ratio.values()) and any(r <= tau for r in ratio.values()))
+        expected = {}
+        for p, d in base.items():
+            r = ratio.get(p)
+            expected[p] = d * tau * (1 + torch.log(r / tau)) / r if r is not None and r > tau else d
+        total = torch.sqrt(sum(d.square().sum() for d in expected.values()))
+        for p in base:
+            torch.testing.assert_close(deltas[p], 0.2 * expected[p] / total, rtol=1e-4, atol=1e-8)
+
+    def test_large_tau_is_condsam(self):
+        from optimizer.condsam3 import CondSAM3
+        _, _, ours = run_policy(CondSAM3, tau=1e9)
+        model, _, condsam = run_policy(CondSAM)
+        for p_ours, p in zip(ours, condsam):
+            torch.testing.assert_close(ours[p_ours], condsam[p], rtol=1e-5, atol=1e-8)
+
+    def test_rejects_invalid_tau(self):
+        from optimizer.condsam3 import CondSAM3
+        model, _ = deep_model_and_batches(0)
+        for value in (0., -1., float('inf'), float('nan')):
+            with self.assertRaises(ValueError):
+                CondSAM3(list(model.parameters()), tau=value)
+
+
 if __name__ == '__main__':
     unittest.main()
 

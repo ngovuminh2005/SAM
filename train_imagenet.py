@@ -103,6 +103,8 @@ Section('sam', 'perturbation policy, independent of the base optimizer').params(
     condsam_power_iters=Param(int, 'CondSAM power iterations', default=1),
     condsam_stats_every=Param(int, 'CondSAM: refresh Kronecker factors every N steps', default=1),
     condsam_sam_rho=Param(float, 'CondSAM2: radius of the added SAM perturbation', default=0.05),
+    condsam_tau=Param(float, 'CondSAM3: log-compress layers whose perturbation norm exceeds tau x the median',
+                      default=10.0),
     local_perturbation=Param(int, 'under DDP, perturb each rank with its own batch gradient '
                              '(SAM paper m-sharpness) instead of the all-reduced one (1/0)', default=1)
 )
@@ -286,11 +288,13 @@ class ImageNetTrainer:
     @param('sam.condsam_power_iters')
     @param('sam.condsam_stats_every')
     @param('sam.condsam_sam_rho')
+    @param('sam.condsam_tau')
     @param('sam.local_perturbation')
     @param('training.precision')
     def create_policy(self, method, rho, include, exclude, friendlysam_sigma,
                       friendlysam_lambda, fishersam_eta, condsam_beta,
-                      condsam_eps, condsam_power_iters, condsam_stats_every, condsam_sam_rho, local_perturbation,
+                      condsam_eps, condsam_power_iters, condsam_stats_every, condsam_sam_rho, condsam_tau,
+                      local_perturbation,
                       precision):
         self.local_perturbation = bool(local_perturbation)
         if method == 'none':
@@ -302,11 +306,13 @@ class ImageNetTrainer:
 
         selected = select_perturbation_parameters(self.model, include, exclude)
         options = dict(rho=rho)
-        if method in ('condsam', 'condsam1', 'condsam2'):
+        if method in ('condsam', 'condsam1', 'condsam2', 'condsam3'):
             options.update(beta=condsam_beta, eps=condsam_eps,
                            power_iters=condsam_power_iters, stats_every=condsam_stats_every)
         if method == 'condsam2':
             options.update(sam_rho=condsam_sam_rho)
+        elif method == 'condsam3':
+            options.update(tau=condsam_tau)
         elif method == 'friendlysam':
             options.update(sigma=friendlysam_sigma, lmbda=friendlysam_lambda)
         elif method == 'fishersam':
@@ -665,6 +671,8 @@ class ImageNetTrainer:
             'condsam1': [('beta', 'condsam_beta'), ('pi', 'condsam_power_iters'), ('se', 'condsam_stats_every')],
             'condsam2': [('beta', 'condsam_beta'), ('pi', 'condsam_power_iters'), ('se', 'condsam_stats_every'),
                          ('samrho', 'condsam_sam_rho')],
+            'condsam3': [('beta', 'condsam_beta'), ('pi', 'condsam_power_iters'), ('se', 'condsam_stats_every'),
+                         ('tau', 'condsam_tau')],
             'friendlysam': [('sigma', 'friendlysam_sigma'), ('lambda', 'friendlysam_lambda')],
             'fishersam': [('eta', 'fishersam_eta')],
         }

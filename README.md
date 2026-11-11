@@ -1,7 +1,7 @@
 # ImageNet (FFCV) with SAM-style optimizers
 
 ResNet ImageNet training built on [ffcv-imagenet](https://github.com/libffcv/ffcv-imagenet), extended with SAM-style
-perturbation policies (`sam`, `asam`, `condsam`, `friendlysam`, `fishersam`, `mongesam`) and W&B logging.
+perturbation policies (`sam`, `asam`, `condsam`, `condsam1`, `condsam2`, `condsam3`, `friendlysam`, `fishersam`, `mongesam`) and W&B logging.
 
 ## Environment
 
@@ -201,4 +201,24 @@ the total perturbation norm equals rho. The original `condsam` is unchanged.
 ```bash
 scripts/run_condsam1.sh                 # run the 3 CondSAM1 jobs
 DRY_RUN=1 scripts/run_condsam1.sh       # print the commands only
+```
+
+## Additional run, 11/11/2026
+
+Run [scripts/run_condsam3.sh](scripts/run_condsam3.sh): a CondSAM3 sweep at rho 0.1, 0.15 and 0.5 (3 runs, tau 10,
+beta 0.99, 5 power iterations, otherwise the same settings as `scripts/train_rn50.sh`). Branch:
+https://github.com/ngovuminh2005/SAM/tree/ffcv-imagenet
+
+CondSAM's penalty is `rho * sum_l R_well(l) / ||E||`, and `||E||` is usually set by one or two layers whose `y^T G x`
+is near zero, so those layers take almost all of rho and the penalty strength swings from step to step. CondSAM3
+(`condsam3`) log-compresses only those layers: with `r_l = ||E_l|| / median ||E_l||`, a layer with `r_l <= tau` is
+left exactly as in CondSAM, and one with `r_l > tau` is scaled to `tau * (1 + ln(r_l / tau))` times the median
+(continuous, slope 1 at tau, no cap), before the global normalization. Every layer is scaled by a positive factor, so
+the penalty is still a positively weighted sum of R_well. One parameter, `--sam.condsam_tau` (default 10, set by
+`CONDSAM_TAUS` in the script): larger is closer to `condsam`, smaller spreads rho over more layers. The original
+`condsam` is unchanged.
+
+```bash
+scripts/run_condsam3.sh                 # run the 3 CondSAM3 jobs
+DRY_RUN=1 scripts/run_condsam3.sh       # print the commands only
 ```
