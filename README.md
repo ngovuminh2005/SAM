@@ -205,14 +205,23 @@ DRY_RUN=1 scripts/run_condsam1.sh       # print the commands only
 
 ## Additional run, 11/11/2026
 
-Run both scripts below, one after the other. [scripts/run_condsam3.sh](scripts/run_condsam3.sh) tests a CondSAM
-variant (`condsam3`, rho 0.05, 0.1, 0.15, 0.5); [scripts/run_condsam.sh](scripts/run_condsam.sh) reruns the original
-`condsam` (rho 0.1, 0.15, 0.5) with a training schedule of its own
-([rn50_configs/rn50_88_epochs_condsam.yaml](rn50_configs/rn50_88_epochs_condsam.yaml)). Both use 88 epochs and are
-otherwise the same as `scripts/train_rn50.sh`. Branch: https://github.com/ngovuminh2005/SAM/tree/ffcv-imagenet
+Run [scripts/run_condsam3.sh](scripts/run_condsam3.sh): it tests a CondSAM variant (`condsam3`, rho 0.05, 0.1, 0.15,
+0.5; 88 epochs, otherwise the same as `scripts/train_rn50.sh`). Branch:
+https://github.com/ngovuminh2005/SAM/tree/ffcv-imagenet
 
 ```bash
 scripts/run_condsam3.sh                 # 4 CondSAM3 jobs
+DRY_RUN=1 scripts/run_condsam3.sh       # print the commands only
+```
+
+## Additional run, 12/11/2026
+
+Run [scripts/run_condsam.sh](scripts/run_condsam.sh): it reruns the original `condsam` (rho 0.1, 0.15, 0.5) with a
+different LR schedule ([rn50_configs/rn50_88_epochs_condsam.yaml](rn50_configs/rn50_88_epochs_condsam.yaml)),
+otherwise the same settings as `scripts/run_condsam3.sh`. Branch:
+https://github.com/ngovuminh2005/SAM/tree/ffcv-imagenet
+
+```bash
 scripts/run_condsam.sh                  # 3 CondSAM jobs
-DRY_RUN=1 scripts/run_condsam.sh        # print the commands only (same for run_condsam3.sh)
+DRY_RUN=1 scripts/run_condsam.sh        # print the commands only
 ```

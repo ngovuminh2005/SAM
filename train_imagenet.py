@@ -59,7 +59,7 @@ Section('data', 'data related stuff').params(
 Section('lr', 'lr scheduling').params(
     step_ratio=Param(float, 'learning rate step ratio', default=0.1),
     step_length=Param(int, 'learning rate step length', default=30),
-    lr_schedule_type=Param(OneOf(['step', 'cyclic']), default='cyclic'),
+    lr_schedule_type=Param(OneOf(['step', 'cyclic', 'cosine']), default='cyclic'),
     lr=Param(float, 'learning rate', default=0.5),
     lr_peak_epoch=Param(int, 'Epoch at which LR peaks', default=2),
 )
@@ -147,6 +147,16 @@ def get_cyclic_lr(epoch, lr, epochs, lr_peak_epoch):
     ys = [1e-4 * lr, lr, 0]
     return np.interp([epoch], xs, ys)[0]
 
+@param('lr.lr')
+@param('training.epochs')
+@param('lr.lr_peak_epoch')
+def get_cosine_lr(epoch, lr, epochs, lr_peak_epoch):
+    # Same linear warm-up as cyclic, then a cosine decay to 0 instead of a linear one
+    if epoch < lr_peak_epoch:
+        return np.interp([epoch], [0, lr_peak_epoch], [1e-4 * lr, lr])[0]
+    progress = min(1., (epoch - lr_peak_epoch) / max(1, epochs - lr_peak_epoch))
+    return 0.5 * lr * (1 + np.cos(np.pi * progress))
+
 class NormalizeImageTorch(ch.nn.Module):
     """GPU NormalizeImage without CuPy: ffcv's same uint8 -> float lookup
     table, gathered with torch instead of a CuPy elementwise kernel."""
@@ -225,7 +235,8 @@ class ImageNetTrainer:
     def get_lr(self, epoch, lr_schedule_type):
         lr_schedules = {
             'cyclic': get_cyclic_lr,
-            'step': get_step_lr
+            'step': get_step_lr,
+            'cosine': get_cosine_lr,
         }
 
         return lr_schedules[lr_schedule_type](epoch)

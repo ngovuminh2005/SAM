@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# ResNet-50 ImageNet: CondSAM (original) with its own LR schedule and weight decay
-# (rn50_configs/rn50_88_epochs_condsam.yaml), one GPU or DDP, logged to W&B.
-# The lr settings below override the config. Added 2026-11-11.
+# ResNet-50 ImageNet: CondSAM (original) with a cosine LR decay
+# (rn50_configs/rn50_88_epochs_condsam.yaml), one GPU or DDP, logged to W&B. Otherwise the
+# same settings as scripts/run_condsam3.sh. The lr settings below override the config.
+# Added 2026-11-11, cosine 2026-11-12.
 #
 #   scripts/run_condsam.sh                 # run the sweep
 #   DRY_RUN=1 scripts/run_condsam.sh       # print the commands only
@@ -30,10 +31,10 @@ CONDSAM_STATS_EVERY=(1)      # refresh factors every N steps; >1 is faster, 1 is
 CONDSAM_TAUS=(10)            # condsam3: knee at tau x the median layer norm; larger = closer to condsam
 
 # LR / regularization, each a list to sweep (defaults = rn50_88_epochs_condsam.yaml):
-LR_REFS=(2.125)              # peak lr at a global batch of 4096, scaled linearly below (rn50: 1.7)
-LR_PEAK_EPOCHS=(5)           # end of linear warm-up (rn50: 2)
-WEIGHT_DECAYS=(5e-5)         # (rn50: 1e-4)
-LR_SCHEDULE=cyclic           # cyclic (warm-up + linear decay to 0) or step
+LR_REFS=(1.7)                # peak lr at a global batch of 4096, scaled linearly below
+LR_PEAK_EPOCHS=(2)           # end of linear warm-up
+WEIGHT_DECAYS=(1e-4)
+LR_SCHEDULE=cosine           # cosine (warm-up + cosine decay to 0), cyclic (linear decay) or step
 LABEL_SMOOTHING=0.1
 
 SEEDS=(42)
@@ -49,7 +50,7 @@ DATA_TAG=500_0.50_90         # <max side>_<JPEG fraction>_<quality>; optional: 5
 IN_MEMORY=auto               # 1 caches the train file in RAM; auto = 1 if it fits in 80% of RAM
 LOG_DIR="${PROJECT_ROOT}/logs"
 WANDB_PROJECT=ffcv-imagenet
-WANDB_GROUP="rn50-condsam-lr-$(date +%Y%m%d-%H%M%S)"     # all runs of this sweep share a group
+WANDB_GROUP="rn50-condsam-cosine-$(date +%Y%m%d-%H%M%S)"     # all runs of this sweep share a group
 # ======================================================================
 
 (( ${#GPU_IDS[@]} == GPUS_PER_NODE )) || {
@@ -112,9 +113,9 @@ method_variants() {
     esac
 }
 
-# Short W&B name, e.g. rn50-condsam-rho0.5-lr2.125-pk5-wd5e-5-s42 (lr at batch 4096)
+# Short W&B name, e.g. rn50-condsam-rho0.1-cosine-lr1.7-pk2-wd1e-4-s42 (lr at batch 4096)
 run_name() {    # method rho seed lr_ref peak wd
-    local tail="lr$4-pk$5-wd$6-s$3"
+    local tail="${LR_SCHEDULE}-lr$4-pk$5-wd$6-s$3"
     if [[ "$2" == none ]]; then echo "rn50-$1-${tail}"; else echo "rn50-$1-rho$2-${tail}"; fi
 }
 

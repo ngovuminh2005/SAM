@@ -1,11 +1,6 @@
-# ResNet-50, 88 epochs, tuned for CondSAM (sam.method: condsam). Differs from
-# rn50_88_epochs.yaml only in lr, lr_peak_epoch and weight_decay; scripts/run_condsam.sh
-# overrides these from its own variables. lr is for a global batch of 4096 (8 x 512).
-#
-# W&B: condsam at rho 0.5-1 leads SAM by 1-2 points at epochs 70-76 but gains less in the
-# final anneal (76 -> 87: +8.8-9.6 vs SAM's +11.3) and ends with a higher train loss, i.e.
-# too much regularization at the end; rho 1 also starts worst (identity factors, 2-epoch
-# warm-up). Hence: longer warm-up, a slightly higher peak, less weight decay.
+# ResNet-50, 88 epochs, for CondSAM (scripts/run_condsam.sh). Same as rn50_88_epochs.yaml
+# except the schedule: the same linear warm-up to epoch 2, then a cosine decay to 0
+# instead of a linear one. lr is for a global batch of 4096 (8 x 512).
 data:
   in_memory: 1
   num_workers: 12
@@ -14,9 +9,9 @@ dist:
 logging:
   folder: /tmp/
 lr:
-  lr: 2.125                # 1.25 x 1.7: SAM-type perturbations tolerate a higher peak
-  lr_schedule_type: cyclic # linear warm-up, then linear decay to 0
-  lr_peak_epoch: 5         # was 2: let the Kronecker factors leave their identity init
+  lr: 1.7
+  lr_schedule_type: cosine
+  lr_peak_epoch: 2
 model:
   arch: resnet50
 resolution:
@@ -32,7 +27,7 @@ training:
   label_smoothing: 0.1
   momentum: 0.9
   optimizer: sgd
-  weight_decay: 0.00005    # was 1e-4: CondSAM's R_well penalty already regularizes
+  weight_decay: 0.0001
   use_blurpool: 1
 validation:
   lr_tta: true
