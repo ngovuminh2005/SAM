@@ -216,12 +216,12 @@ DRY_RUN=1 scripts/run_condsam3.sh       # print the commands only
 
 ## Additional run, 12/11/2026
 
-Run [scripts/run_condsam.sh](scripts/run_condsam.sh): it reruns the original `condsam` (rho 0.1, 0.15, 0.5) with a
+Run [scripts/run_condsam.sh](scripts/run_condsam.sh): it reruns the original `condsam` (rho 0.1, 0.15, 0.5, 1) with a
 different LR schedule ([rn50_configs/rn50_88_epochs_condsam.yaml](rn50_configs/rn50_88_epochs_condsam.yaml)),
 otherwise the same settings as `scripts/run_condsam3.sh`. Branch:
 https://github.com/ngovuminh2005/SAM/tree/ffcv-imagenet
 
 ```bash
-scripts/run_condsam.sh                  # 3 CondSAM jobs
+scripts/run_condsam.sh                  # 4 CondSAM jobs
 DRY_RUN=1 scripts/run_condsam.sh        # print the commands only
 ```
