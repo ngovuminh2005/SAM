@@ -2,7 +2,7 @@
 # ResNet-50 ImageNet: CondSAM (original) with a cosine LR decay
 # (rn50_configs/rn50_88_epochs_condsam.yaml), one GPU or DDP, logged to W&B. Otherwise the
 # same settings as scripts/run_condsam3.sh. The lr settings below override the config.
-# Added 2026-11-11, cosine 2026-11-12.
+# Added 2026-11-11, cosine 2026-11-12, cosine tail variants 2026-11-13.
 #
 #   scripts/run_condsam.sh                 # run the sweep
 #   DRY_RUN=1 scripts/run_condsam.sh       # print the commands only
@@ -19,7 +19,7 @@ GPU_IDS=(0)                  # which GPUs, e.g. (0 1 2 3); one id per process
 # ============================== SWEEP =================================
 EPOCHS=(88)                  # any; the ramp and LR schedule stretch with it
 METHODS=(condsam)
-RHOS=(0.1 0.15 0.5 1)        # perturbation radius
+RHOS=(0.05 0.1 0.15)         # perturbation radius
 
 # Only used by the matching method:
 FRIENDLYSAM_SIGMAS=(1.0)
@@ -34,7 +34,12 @@ CONDSAM_TAUS=(10)            # condsam3: knee at tau x the median layer norm; la
 LR_REFS=(1.7)                # peak lr at a global batch of 4096, scaled linearly below
 LR_PEAK_EPOCHS=(2)           # end of linear warm-up
 WEIGHT_DECAYS=(1e-4)
-LR_SCHEDULE=cosine           # cosine (warm-up + cosine decay to 0), cyclic (linear decay) or step
+LR_SCHEDULE=cosine_tail      # cosine_tail, cosine (warm-up + cosine decay to 0), cyclic (linear decay) or step
+# cosine_tail only: exactly cosine through W&B epoch TAIL_EPOCH, then from epoch TAIL_EPOCH+1
+# lr = cosine(TAIL_EPOCH) * (1 - u)^power, u: 0 -> 1 over the remaining epochs (continuous).
+# One run per power and rho; power 2 ~ plain cosine.
+TAIL_EPOCH=80
+TAIL_POWERS=(4 2)            # 4 decays faster than cosine, 2 ~ cosine; <2 would decay slower
 LABEL_SMOOTHING=0.1
 
 SEEDS=(42)
@@ -114,8 +119,10 @@ method_variants() {
 }
 
 # Short W&B name, e.g. rn50-condsam-rho0.1-cosine-lr1.7-pk2-wd1e-4-s42 (lr at batch 4096)
-run_name() {    # method rho seed lr_ref peak wd
-    local tail="${LR_SCHEDULE}-lr$4-pk$5-wd$6-s$3"
+run_name() {    # method rho seed lr_ref peak wd tail
+    local schedule="${LR_SCHEDULE}"
+    [[ "${schedule}" == cosine_tail ]] && schedule="costail${TAIL_EPOCH}p$7"
+    local tail="${schedule}-lr$4-pk$5-wd$6-s$3"
     if [[ "$2" == none ]]; then echo "rn50-$1-${tail}"; else echo "rn50-$1-rho$2-${tail}"; fi
 }
 
@@ -135,10 +142,12 @@ for epochs in "${EPOCHS[@]}"; do
                 rho=none
             fi
             while IFS= read -r extra; do
+                tails=("${TAIL_POWERS[@]}")
+                [[ "${LR_SCHEDULE}" == cosine_tail ]] || tails=(none)     # other schedules: one run
                 for lr_ref in "${LR_REFS[@]}"; do for peak in "${LR_PEAK_EPOCHS[@]}"; do
-                    for wd in "${WEIGHT_DECAYS[@]}"; do for seed in "${SEEDS[@]}"; do
-                        runs+=("${epochs}|${method}|${rho}|${seed}|${lr_ref}|${peak}|${wd}|${extra}")
-                    done; done
+                    for wd in "${WEIGHT_DECAYS[@]}"; do for tl in "${tails[@]}"; do for seed in "${SEEDS[@]}"; do
+                        runs+=("${epochs}|${method}|${rho}|${seed}|${lr_ref}|${peak}|${wd}|${tl}|${extra}")
+                    done; done; done
                 done; done
             done < <(method_variants "${method}")
         done
@@ -148,8 +157,8 @@ done
 echo "Sweep ${WANDB_GROUP}: ${#runs[@]} run(s) on GPU(s) ${CUDA_VISIBLE_DEVICES} (${CONFIG}, ${NUM_WORKERS} workers/GPU, in_memory=${IN_MEMORY}, ${PYTHON})"
 failed=()
 for i in "${!runs[@]}"; do
-    IFS='|' read -r epochs method rho seed lr_ref peak wd extra <<< "${runs[$i]}"
-    name="$(run_name "${method}" "${rho}" "${seed}" "${lr_ref}" "${peak}" "${wd}")"
+    IFS='|' read -r epochs method rho seed lr_ref peak wd tl extra <<< "${runs[$i]}"
+    name="$(run_name "${method}" "${rho}" "${seed}" "${lr_ref}" "${peak}" "${wd}" "${tl}")"
     # Peak lr is given for a global batch of 4096; scale linearly with this run's batch.
     lr=$(awk -v r="${lr_ref}" -v b="${BATCH_SIZE}" -v n="${GPUS_PER_NODE}" 'BEGIN { print r * b * n / 4096 }')
     # rn50_configs differ only in epochs and the 160->192px ramp, which all
@@ -185,10 +194,12 @@ for i in "${!runs[@]}"; do
         --wandb.name="${name}"
     )
     [[ "${rho}" != none ]] && command+=(--sam.rho="${rho}")
+    # W&B epochs are 1-based: tail_epoch (0-based) = TAIL_EPOCH keeps epochs 1..TAIL_EPOCH cosine
+    [[ "${tl}" != none ]] && command+=(--lr.tail_epoch="${TAIL_EPOCH}" --lr.tail_power="${tl}")
     [[ -n "${extra}" ]] && read -ra extra_args <<< "${extra}" && command+=("${extra_args[@]}")
     command+=("$@")
 
-    echo "=== [$((i + 1))/${#runs[@]}] ${name}: epochs=${epochs} method=${method} rho=${rho} lr=${lr} peak=${peak} wd=${wd} seed=${seed} ${extra}"
+    echo "=== [$((i + 1))/${#runs[@]}] ${name}: epochs=${epochs} method=${method} rho=${rho} lr=${lr} peak=${peak} wd=${wd} tail=${tl} seed=${seed} ${extra}"
     if [[ "${DRY_RUN:-0}" == 1 ]]; then
         printf '%q ' "${command[@]}"; printf '\n'
         continue

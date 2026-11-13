@@ -225,3 +225,16 @@ https://github.com/ngovuminh2005/SAM/tree/ffcv-imagenet
 scripts/run_condsam.sh                  # 4 CondSAM jobs
 DRY_RUN=1 scripts/run_condsam.sh        # print the commands only
 ```
+
+The script now defaults to the 13/11/2026 run below; to repeat this one, set `LR_SCHEDULE=cosine` and
+`RHOS=(0.1 0.15 0.5 1)` at the top of it.
+
+## Additional run, 13/11/2026
+
+Run [scripts/run_condsam.sh](scripts/run_condsam.sh) again: the original `condsam` at rho 0.05, 0.1 and 0.15, each
+with two variants of the LR schedule over the last epochs (6 runs), otherwise the same settings as the 12/11/2026 run.
+
+```bash
+scripts/run_condsam.sh                  # 6 CondSAM jobs
+DRY_RUN=1 scripts/run_condsam.sh        # print the commands only
+```

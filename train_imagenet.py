@@ -59,7 +59,9 @@ Section('data', 'data related stuff').params(
 Section('lr', 'lr scheduling').params(
     step_ratio=Param(float, 'learning rate step ratio', default=0.1),
     step_length=Param(int, 'learning rate step length', default=30),
-    lr_schedule_type=Param(OneOf(['step', 'cyclic', 'cosine']), default='cyclic'),
+    lr_schedule_type=Param(OneOf(['step', 'cyclic', 'cosine', 'cosine_tail']), default='cyclic'),
+    tail_epoch=Param(int, 'cosine_tail: epoch (0-based) from which the cosine tail is replaced', default=80),
+    tail_power=Param(float, 'cosine_tail: decay power of the tail (2 ~ cosine, >2 faster, <2 slower)', default=2.),
     lr=Param(float, 'learning rate', default=0.5),
     lr_peak_epoch=Param(int, 'Epoch at which LR peaks', default=2),
 )
@@ -157,6 +159,19 @@ def get_cosine_lr(epoch, lr, epochs, lr_peak_epoch):
     progress = min(1., (epoch - lr_peak_epoch) / max(1, epochs - lr_peak_epoch))
     return 0.5 * lr * (1 + np.cos(np.pi * progress))
 
+@param('training.epochs')
+@param('lr.tail_epoch')
+@param('lr.tail_power')
+def get_cosine_tail_lr(epoch, epochs, tail_epoch, tail_power):
+    # Exactly cosine up to tail_epoch; then cosine(tail_epoch) * (1 - u)^tail_power, u going
+    # 0 -> 1 from tail_epoch to the last epoch (continuous). Power 2 is close to cosine's own tail.
+    if not 0 < tail_epoch < epochs or tail_power <= 0:
+        raise ValueError('cosine_tail needs 0 < tail_epoch < epochs and a positive tail_power')
+    if epoch < tail_epoch:
+        return get_cosine_lr(epoch)
+    u = min(1., (epoch - tail_epoch) / (epochs - tail_epoch))
+    return get_cosine_lr(tail_epoch) * (1 - u) ** tail_power
+
 class NormalizeImageTorch(ch.nn.Module):
     """GPU NormalizeImage without CuPy: ffcv's same uint8 -> float lookup
     table, gathered with torch instead of a CuPy elementwise kernel."""
@@ -237,6 +252,7 @@ class ImageNetTrainer:
             'cyclic': get_cyclic_lr,
             'step': get_step_lr,
             'cosine': get_cosine_lr,
+            'cosine_tail': get_cosine_tail_lr,
         }
 
         return lr_schedules[lr_schedule_type](epoch)
