@@ -107,8 +107,8 @@ for i in "${!BASELINE_METHODS[@]}"; do
     method="${BASELINE_METHODS[$i]}"
     rho="${BASELINE_RHOS[$i]}"
     extra="$(baseline_extra "${method}")"
-    name="rn18-${method}-rho${rho}-s${SEED}"
-    [[ "${method}" == no_sam ]] && name="rn18-no_sam-s${SEED}"
+    name="${method}-rho${rho}-s${SEED}"
+    [[ "${method}" == no_sam ]] && name="no_sam-s${SEED}"
     command=(
         "${PYTHON}" train_imagenet.py
         --config-file rn18_configs/rn18_88_epochs.yaml

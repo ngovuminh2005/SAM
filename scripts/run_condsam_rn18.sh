@@ -117,12 +117,12 @@ method_variants() {
     esac
 }
 
-# Short W&B name, e.g. rn18-condsam-rho0.1-cosine-lr0.5-pk2-wd5e-5-s42 (lr at batch 1024)
+# Short W&B name, e.g. condsam-rho0.1-cosine-lr0.5-pk2-wd5e-5-s42 (lr at batch 1024)
 run_name() {    # method rho seed lr_ref peak wd tail
     local schedule="${LR_SCHEDULE}"
     [[ "${schedule}" == cosine_tail ]] && schedule="costail${TAIL_EPOCH}p$7"
     local tail="${schedule}-lr$4-pk$5-wd$6-s$3"
-    if [[ "$2" == none ]]; then echo "rn18-$1-${tail}"; else echo "rn18-$1-rho$2-${tail}"; fi
+    if [[ "$2" == none ]]; then echo "$1-${tail}"; else echo "$1-rho$2-${tail}"; fi
 }
 
 for method in "${METHODS[@]}"; do
