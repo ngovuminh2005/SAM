@@ -253,3 +253,17 @@ scripts/run_baseline_rn18.sh            # 6 jobs
 scripts/run_condsam_rn18.sh             # 4 CondSAM jobs
 DRY_RUN=1 scripts/run_condsam_rn18.sh   # print the commands only (same for run_baseline_rn18.sh)
 ```
+
+## Additional run, 15/11/2026
+
+Run both scripts: the original `condsam` with the cosine LR schedule up to epoch 80, then the lr held constant for the
+last epochs. [scripts/run_condsam_const.sh](scripts/run_condsam_const.sh) is ResNet-50 (rho 0.05, 0.1, 0.15; W&B
+project `ffcv-imagenet`) and [scripts/run_condsam_rn18_const.sh](scripts/run_condsam_rn18_const.sh) is ResNet-18
+(rho 0.05, 0.1, 0.15, 0.5; W&B project `rn18-ffcv-imagenet`), otherwise the same settings as `scripts/run_condsam.sh`
+and `scripts/run_condsam_rn18.sh`.
+
+```bash
+scripts/run_condsam_const.sh            # 3 ResNet-50 CondSAM jobs
+scripts/run_condsam_rn18_const.sh       # 4 ResNet-18 CondSAM jobs
+DRY_RUN=1 scripts/run_condsam_const.sh  # print the commands only (same for the ResNet-18 script)
+```
