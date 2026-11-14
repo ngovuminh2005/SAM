@@ -53,7 +53,7 @@ DATA_DIR="${PROJECT_ROOT}/data"
 DATA_TAG=500_0.50_90         # <max side>_<JPEG fraction>_<quality>; optional: 500_1.0_90
 IN_MEMORY=auto               # 1 caches the train file in RAM; auto = 1 if it fits in 80% of RAM
 LOG_DIR="${PROJECT_ROOT}/logs"
-WANDB_PROJECT=ffcv-imagenet
+WANDB_PROJECT=rn18-ffcv-imagenet
 WANDB_GROUP="rn18-condsam-cosine-$(date +%Y%m%d-%H%M%S)"     # all runs of this sweep share a group
 # ======================================================================
 
