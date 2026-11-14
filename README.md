@@ -238,3 +238,17 @@ with two variants of the LR schedule over the last epochs (6 runs), otherwise th
 scripts/run_condsam.sh                  # 6 CondSAM jobs
 DRY_RUN=1 scripts/run_condsam.sh        # print the commands only
 ```
+
+## Additional run, 14/11/2026
+
+ResNet-18, 88 epochs (`rn18_configs/rn18_88_epochs.yaml`: batch 1024, lr 0.5 on one GPU). Run both scripts:
+[scripts/run_baseline_rn18.sh](scripts/run_baseline_rn18.sh) runs no SAM and the SAM baselines (`sam`, `asam`,
+`friendlysam`, `fishersam`, `mongesam`) with the standard linear LR decay, and
+[scripts/run_condsam_rn18.sh](scripts/run_condsam_rn18.sh) runs the original `condsam` at rho 0.05, 0.1, 0.15 and 0.5
+with a cosine LR decay ([rn18_configs/rn18_88_epochs_condsam.yaml](rn18_configs/rn18_88_epochs_condsam.yaml)).
+
+```bash
+scripts/run_baseline_rn18.sh            # 6 jobs
+scripts/run_condsam_rn18.sh             # 4 CondSAM jobs
+DRY_RUN=1 scripts/run_condsam_rn18.sh   # print the commands only (same for run_baseline_rn18.sh)
+```

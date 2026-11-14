@@ -1,0 +1,36 @@
+# ResNet-18, 88 epochs, for CondSAM (scripts/run_condsam_rn18.sh). Same as rn18_88_epochs.yaml
+# except the schedule: the same linear warm-up to epoch 2, then a cosine decay to 0
+# instead of a linear one. lr is for a batch of 1024 (1 x 1024).
+data:
+  gpu: 0
+  in_memory: 1
+  num_workers: 12
+dist:
+  world_size: 1
+logging:
+  folder: /tmp/
+  log_level: 0
+lr:
+  lr: 0.5
+  lr_peak_epoch: 2
+  lr_schedule_type: cosine
+model:
+  arch: resnet18
+resolution:
+  end_ramp: 76
+  max_res: 192
+  min_res: 160
+  start_ramp: 65
+training:
+  batch_size: 1024
+  bn_wd: 0
+  distributed: 0
+  epochs: 88
+  label_smoothing: 0.1
+  momentum: 0.9
+  optimizer: sgd
+  weight_decay: 5e-5
+  use_blurpool: 1
+validation:
+  lr_tta: true
+  resolution: 256
